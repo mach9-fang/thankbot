@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #fff7f5;
+  --foreground: #1c1917;
+}
+
+body {
+  color: var(--foreground);
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -20%, #fecdd3 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, #fed7aa 0%, transparent 45%),
+    var(--background);
+  min-height: 100vh;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
