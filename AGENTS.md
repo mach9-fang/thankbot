@@ -43,17 +43,17 @@ key and `SECRET_KEY` (`sb_secret_…`) as the service role key, both from
 and cause "permission denied". (The local keys are stable demo values, but are
 left out of source control here to satisfy secret scanning.)
 
-### Gotcha: table grants (`supabase/seed.sql`)
+### Gotcha: table grants (`0003_grant_api_roles.sql`)
 
-The hosted Supabase platform auto-grants table privileges to the PostgREST API
-roles (`anon`/`authenticated`/`service_role`). The **local** stack does NOT do
-this for tables created by `postgres` in the `public` schema, so PostgREST
-returns `permission denied for table people/thanks`. `supabase/seed.sql`
-re-applies those grants and is run automatically after migrations by
-`supabase start` and `supabase db reset`. If you bypass the seed step (or apply
-migrations by hand), run `supabase/seed.sql` against the DB or you will hit
-permission-denied errors. RLS (configured in the migrations) remains the real
-security boundary.
+Newer Supabase projects no longer auto-grant privileges on objects created by
+the `postgres` role in the `public` schema. Because `0001_init.sql` creates the
+tables/view without explicit grants, PostgREST returns
+`permission denied for table people/thanks` and the board fails to load — both
+locally and on any freshly-migrated hosted project. `0003_grant_api_roles.sql`
+re-grants the API roles (`anon`/`authenticated`/`service_role`) access to the
+schema. It is a normal migration, so it applies locally via `supabase start` /
+`supabase db reset` and to hosted projects via `supabase db push`. RLS
+(configured in `0001_init.sql`) remains the real security boundary.
 
 ### Auth for local testing
 
