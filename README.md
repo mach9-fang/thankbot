@@ -1,94 +1,111 @@
 # ThankBot
 
-A small appreciation board for your team.
+An appreciation board for your team. Employees sign in with Google, thank a
+teammate, and everyone sees it on the feed.
 
-- **Web UI** — see who thanked whom, plus each person's thanks history
-- **Slack** — `/thanks @person for <reason>` creates an entry automatically
+- **Next.js 14** (App Router) — deployed on Vercel
+- **Supabase** — Postgres for the record of who thanked whom, plus Google auth
+- **Slack** — `/thanks @person for …` is planned, not wired up yet
 
-## Features
+## How it works
 
-1. **Home feed** — latest thanks and a “most thanked” leaderboard
-2. **Person pages** — `/people/[id]` shows thanks received and given
-3. **Slack slash command** — `POST /api/slack/thanks` handles `/thanks`
+1. Sign in with Google (Supabase Auth). First login creates the employee's row
+   in `people`, or claims an existing row with the same email.
+2. The home page form posts to `POST /api/thanks`, which sets the sender from
+   the session — never from the request body.
+3. The feed, leaderboard, and `/people/[id]` pages read straight from Postgres.
 
-## Quick start
+## Setup
+
+### 1. Database
+
+Run the files in `supabase/migrations/` in order in the Supabase SQL editor (or
+`supabase db push`). `0001_init.sql` creates:
+
+| Object | Purpose |
+|--------|---------|
+| `people` | One row per employee (`email`, `name`, `avatar_url`, optional `auth_user_id`, `slack_user_id` for later) |
+| `thanks` | `from_person_id` → `to_person_id` with a `reason` and `source` |
+| `people_with_stats` | View adding `thanks_received` / `thanks_given` |
+
+Row Level Security is on: anyone can read the board, but a thanks can only be
+inserted with `from_person_id` equal to the signed-in user's person row.
+
+### 2. Google sign-in
+
+In the Supabase dashboard → **Authentication → Providers → Google**, add your
+Google OAuth client ID and secret. In the Google Cloud console, set the
+authorized redirect URI to:
+
+```
+https://qewqxlzvlpgmhwibkfig.supabase.co/auth/v1/callback
+```
+
+Then under **Authentication → URL Configuration**, set the Site URL to
+`https://thankbot-jol7svuvz.previewmach9.com` and add these redirect URLs:
+
+```
+https://thankbot-jol7svuvz.previewmach9.com/auth/callback
+http://localhost:3000/auth/callback
+```
+
+To restrict the board to your company, limit the Google OAuth client to your
+Workspace org (external users then can't complete sign-in).
+
+### 3. Environment variables
 
 ```bash
-npm install
 cp .env.example .env.local
-npm run seed    # optional demo data
-npm run dev
+```
+
+| Variable | Notes |
+|----------|-------|
+| `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` locally, the Vercel domain in production |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://qewqxlzvlpgmhwibkfig.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Project Settings → API |
+| `SUPABASE_SERVICE_ROLE_KEY` | Only for `pnpm seed`; keep it out of the browser |
+| `NEXT_PUBLIC_ALLOW_SELF_THANKS` | Debug only — set `true` to thank yourself while testing alone |
+
+### 4. Run it
+
+```bash
+pnpm install
+pnpm seed    # optional demo people + thanks
+pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-## Slack setup
+## Deploying to Vercel
 
-1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps).
-2. Under **OAuth & Permissions**, add bot scopes:
-   - `commands`
-   - `users:read` (to resolve display names / avatars)
-3. Install the app to your workspace and copy the **Bot User OAuth Token** (`xoxb-…`).
-4. Under **Basic Information**, copy the **Signing Secret**.
-5. Under **Slash Commands**, create `/thanks`:
-   - **Request URL**: `https://<your-host>/api/slack/thanks`
-   - **Short description**: Thank a teammate
-   - **Usage hint**: `@person [ @person2 … ] for <reason>`
-6. Put the values in `.env.local`:
-
-```env
-NEXT_PUBLIC_SITE_URL=https://your-thankbot.example.com
-SLACK_SIGNING_SECRET=...
-SLACK_BOT_TOKEN=xoxb-...
-```
-
-### Usage in Slack
-
-```
-/thanks @alice for reviewing my PR
-/thanks @bob @cara for crushing the launch
-```
-
-ThankBot:
-
-- Parses Slack user mentions (`<@U123…>`)
-- Upserts people in SQLite
-- Creates one thanks entry per recipient
-- Replies in-channel with a confirmation
-
-For local development without signature checks, set `SLACK_SKIP_VERIFY=true` (never in production).
-
-You can also test the endpoint with curl:
-
-```bash
-curl -X POST http://localhost:3000/api/slack/thanks \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'user_id=U_TEST&user_name=tester&command=/thanks&text=<@U_ALICE> for being awesome'
-```
-
-(Requires `SLACK_SKIP_VERIFY=true` and a seeded/known recipient id, or the recipient will be stored with their Slack id as the name until `users.info` succeeds.)
+1. Import the repo in Vercel (framework preset: Next.js — no extra config).
+2. Add `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY` as environment variables.
+3. Point the domain `thankbot-jol7svuvz.previewmach9.com` at the deployment and
+   make sure the same URL is in Supabase's redirect list.
 
 ## API
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/thanks` | Recent thanks (`?limit=50`) |
+| `POST` | `/api/thanks` | Send thanks — requires a session; body `{ to_person_id, reason }` |
 | `GET` | `/api/people` | People with received/given counts |
 | `GET` | `/api/people/[id]` | Person + received/given history |
-| `POST` | `/api/slack/thanks` | Slack slash command webhook |
-
-## Stack
-
-- Next.js 14 (App Router)
-- Tailwind CSS
-- SQLite via `better-sqlite3` (file at `data/thankbot.db`)
 
 ## Scripts
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start development server |
+| `npm run dev` | Development server |
 | `npm run build` | Production build |
-| `npm run start` | Run production server |
-| `npm run seed` | Load demo people + thanks |
+| `npm run start` | Run the production build |
+| `npm run seed` | Load demo people + thanks (needs service role key) |
 | `npm run lint` | ESLint |
+
+## Coming later: Slack
+
+`src/lib/slack.ts` still holds the slash-command parser and signature
+verification, and `people.slack_user_id` is reserved for matching Slack accounts
+to employees. The `/api/slack/thanks` endpoint will come back once the web flow
+is settled.

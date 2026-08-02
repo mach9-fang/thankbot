@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { Person } from "@/lib/types";
 
 const COLORS = [
@@ -35,15 +38,20 @@ export function Avatar({
   person: Pick<Person, "id" | "name" | "avatar_url">;
   size?: "sm" | "md" | "lg";
 }) {
+  const [imageFailed, setImageFailed] = useState(false);
   const sizeClass =
     size === "lg" ? "h-16 w-16 text-xl" : size === "sm" ? "h-8 w-8 text-xs" : "h-10 w-10 text-sm";
 
-  if (person.avatar_url) {
+  if (person.avatar_url && !imageFailed) {
     return (
+      // Google profile images reject requests that carry a referrer, and can
+      // rate-limit; initials stand in whenever the fetch fails.
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={person.avatar_url}
         alt={person.name}
+        referrerPolicy="no-referrer"
+        onError={() => setImageFailed(true)}
         className={`${sizeClass} rounded-full object-cover ring-2 ring-white shadow-sm`}
       />
     );

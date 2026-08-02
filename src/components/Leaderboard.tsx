@@ -8,11 +8,7 @@ export function Leaderboard({ people }: { people: PersonWithStats[] }) {
   if (top.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-stone-200 bg-white/50 p-6 text-sm text-stone-500">
-        No thanks yet — be the first to send one from Slack with{" "}
-        <code className="rounded bg-stone-100 px-1.5 py-0.5 text-stone-700">
-          /thanks
-        </code>
-        .
+        No thanks yet — send the first one to start the leaderboard.
       </div>
     );
   }

@@ -1,248 +1,215 @@
-import Database from "better-sqlite3";
-import fs from "fs";
-import path from "path";
-import { randomUUID } from "crypto";
-import type { Person, PersonWithStats, ThanksWithPeople } from "./types";
+import { createServerSupabase } from "./supabase/server";
+import type {
+  Person,
+  PersonWithStats,
+  ThanksWithPeople,
+} from "./types";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "thankbot.db");
+const THANKS_SELECT = `
+  id,
+  from_person_id,
+  to_person_id,
+  reason,
+  source,
+  created_at,
+  from_person:people!thanks_from_person_id_fkey (id, name, avatar_url),
+  to_person:people!thanks_to_person_id_fkey (id, name, avatar_url)
+`;
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __thankbotDb: Database.Database | undefined;
+export const MAX_REASON_LENGTH = 500;
+
+/** Debug escape hatch so one developer can exercise the flow alone. */
+export const ALLOW_SELF_THANKS =
+  process.env.NEXT_PUBLIC_ALLOW_SELF_THANKS === "true";
+
+export async function listThanks(limit = 50): Promise<ThanksWithPeople[]> {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("thanks")
+    .select(THANKS_SELECT)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as ThanksWithPeople[];
 }
 
-function ensureSchema(db: Database.Database) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS people (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      avatar_url TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+export async function listPeople(): Promise<PersonWithStats[]> {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("people_with_stats")
+    .select("*")
+    .order("thanks_received", { ascending: false })
+    .order("name", { ascending: true });
 
-    CREATE TABLE IF NOT EXISTS thanks (
-      id TEXT PRIMARY KEY,
-      from_person_id TEXT NOT NULL,
-      to_person_id TEXT NOT NULL,
-      reason TEXT NOT NULL,
-      source TEXT NOT NULL DEFAULT 'web',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (from_person_id) REFERENCES people(id),
-      FOREIGN KEY (to_person_id) REFERENCES people(id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_thanks_to ON thanks(to_person_id);
-    CREATE INDEX IF NOT EXISTS idx_thanks_from ON thanks(from_person_id);
-    CREATE INDEX IF NOT EXISTS idx_thanks_created ON thanks(created_at DESC);
-  `);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as PersonWithStats[];
 }
 
-export function getDb(): Database.Database {
-  if (global.__thankbotDb) {
-    return global.__thankbotDb;
-  }
+export async function getPerson(id: string): Promise<PersonWithStats | null> {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("people_with_stats")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
 
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-
-  const db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  ensureSchema(db);
-  global.__thankbotDb = db;
-  return db;
+  if (error) throw new Error(error.message);
+  return (data as PersonWithStats | null) ?? null;
 }
 
-export function upsertPerson(
-  id: string,
-  name: string,
-  avatarUrl: string | null = null
-): Person {
-  const db = getDb();
-  const existing = getPerson(id);
-
-  if (!existing) {
-    db.prepare(
-      `
-      INSERT INTO people (id, name, avatar_url)
-      VALUES (?, ?, ?)
-    `
-    ).run(id, name, avatarUrl);
-  } else {
-    // Prefer a real display name over falling back to the raw Slack id
-    const nextName =
-      name && name !== id ? name : existing.name && existing.name !== id ? existing.name : name;
-    db.prepare(
-      `
-      UPDATE people
-      SET name = ?,
-          avatar_url = COALESCE(?, avatar_url)
-      WHERE id = ?
-    `
-    ).run(nextName, avatarUrl, id);
-  }
-
-  return db.prepare("SELECT * FROM people WHERE id = ?").get(id) as Person;
-}
-
-export function getPerson(id: string): Person | undefined {
-  return getDb().prepare("SELECT * FROM people WHERE id = ?").get(id) as
-    | Person
-    | undefined;
-}
-
-export function listPeople(): PersonWithStats[] {
-  return getDb()
-    .prepare(
-      `
-    SELECT
-      p.*,
-      COALESCE(received.count, 0) AS thanks_received,
-      COALESCE(given.count, 0) AS thanks_given
-    FROM people p
-    LEFT JOIN (
-      SELECT to_person_id AS person_id, COUNT(*) AS count
-      FROM thanks
-      GROUP BY to_person_id
-    ) received ON received.person_id = p.id
-    LEFT JOIN (
-      SELECT from_person_id AS person_id, COUNT(*) AS count
-      FROM thanks
-      GROUP BY from_person_id
-    ) given ON given.person_id = p.id
-    ORDER BY thanks_received DESC, p.name ASC
-  `
-    )
-    .all() as PersonWithStats[];
-}
-
-export function createThanks(input: {
-  fromPersonId: string;
-  toPersonId: string;
-  reason: string;
-  source?: "slack" | "web" | "seed";
-}): ThanksWithPeople {
-  const db = getDb();
-  const id = randomUUID();
-  const source = input.source ?? "web";
-
-  db.prepare(
-    `
-    INSERT INTO thanks (id, from_person_id, to_person_id, reason, source)
-    VALUES (?, ?, ?, ?, ?)
-  `
-  ).run(id, input.fromPersonId, input.toPersonId, input.reason, source);
-
-  const row = db
-    .prepare(
-      `
-    SELECT
-      t.*,
-      json_object(
-        'id', fp.id,
-        'name', fp.name,
-        'avatar_url', fp.avatar_url,
-        'created_at', fp.created_at
-      ) AS from_person,
-      json_object(
-        'id', tp.id,
-        'name', tp.name,
-        'avatar_url', tp.avatar_url,
-        'created_at', tp.created_at
-      ) AS to_person
-    FROM thanks t
-    JOIN people fp ON fp.id = t.from_person_id
-    JOIN people tp ON tp.id = t.to_person_id
-    WHERE t.id = ?
-  `
-    )
-    .get(id) as Record<string, unknown>;
-
-  return hydrateThanks(row);
-}
-
-export function listThanks(limit = 50): ThanksWithPeople[] {
-  const rows = getDb()
-    .prepare(
-      `
-    SELECT
-      t.*,
-      json_object(
-        'id', fp.id,
-        'name', fp.name,
-        'avatar_url', fp.avatar_url,
-        'created_at', fp.created_at
-      ) AS from_person,
-      json_object(
-        'id', tp.id,
-        'name', tp.name,
-        'avatar_url', tp.avatar_url,
-        'created_at', tp.created_at
-      ) AS to_person
-    FROM thanks t
-    JOIN people fp ON fp.id = t.from_person_id
-    JOIN people tp ON tp.id = t.to_person_id
-    ORDER BY t.created_at DESC
-    LIMIT ?
-  `
-    )
-    .all(limit) as Record<string, unknown>[];
-
-  return rows.map(hydrateThanks);
-}
-
-export function listThanksForPerson(personId: string): {
+export async function listThanksForPerson(personId: string): Promise<{
   received: ThanksWithPeople[];
   given: ThanksWithPeople[];
-} {
-  const db = getDb();
-  const query = `
-    SELECT
-      t.*,
-      json_object(
-        'id', fp.id,
-        'name', fp.name,
-        'avatar_url', fp.avatar_url,
-        'created_at', fp.created_at
-      ) AS from_person,
-      json_object(
-        'id', tp.id,
-        'name', tp.name,
-        'avatar_url', tp.avatar_url,
-        'created_at', tp.created_at
-      ) AS to_person
-    FROM thanks t
-    JOIN people fp ON fp.id = t.from_person_id
-    JOIN people tp ON tp.id = t.to_person_id
-    WHERE ${"{where}"}
-    ORDER BY t.created_at DESC
-  `;
+}> {
+  const supabase = createServerSupabase();
 
-  const received = (
-    db.prepare(query.replace("{where}", "t.to_person_id = ?")).all(personId) as
-      Record<string, unknown>[]
-  ).map(hydrateThanks);
+  const [received, given] = await Promise.all([
+    supabase
+      .from("thanks")
+      .select(THANKS_SELECT)
+      .eq("to_person_id", personId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("thanks")
+      .select(THANKS_SELECT)
+      .eq("from_person_id", personId)
+      .order("created_at", { ascending: false }),
+  ]);
 
-  const given = (
-    db
-      .prepare(query.replace("{where}", "t.from_person_id = ?"))
-      .all(personId) as Record<string, unknown>[]
-  ).map(hydrateThanks);
+  if (received.error) throw new Error(received.error.message);
+  if (given.error) throw new Error(given.error.message);
 
-  return { received, given };
+  return {
+    received: (received.data ?? []) as unknown as ThanksWithPeople[],
+    given: (given.data ?? []) as unknown as ThanksWithPeople[],
+  };
 }
 
-function hydrateThanks(row: Record<string, unknown>): ThanksWithPeople {
-  return {
-    id: row.id as string,
-    from_person_id: row.from_person_id as string,
-    to_person_id: row.to_person_id as string,
-    reason: row.reason as string,
-    source: row.source as ThanksWithPeople["source"],
-    created_at: row.created_at as string,
-    from_person: JSON.parse(row.from_person as string) as Person,
-    to_person: JSON.parse(row.to_person as string) as Person,
-  };
+/**
+ * The signed-in visitor's `people` row, creating (or claiming) it on first
+ * login so Google accounts and thanks records point at the same person.
+ */
+export async function getCurrentPerson(): Promise<Person | null> {
+  const supabase = createServerSupabase();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return null;
+
+  const metadata = user.user_metadata ?? {};
+  const name =
+    (metadata.full_name as string | undefined) ||
+    (metadata.name as string | undefined) ||
+    user.email?.split("@")[0] ||
+    "Teammate";
+  const avatarUrl =
+    (metadata.avatar_url as string | undefined) ||
+    (metadata.picture as string | undefined) ||
+    null;
+
+  const existing = await supabase
+    .from("people")
+    .select("*")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
+
+  if (existing.error) throw new Error(existing.error.message);
+
+  if (existing.data) {
+    const person = existing.data as Person;
+    const profileChanged =
+      person.name !== name || person.avatar_url !== avatarUrl;
+    if (!profileChanged) return person;
+
+    const updated = await supabase
+      .from("people")
+      .update({ name, avatar_url: avatarUrl })
+      .eq("id", person.id)
+      .select("*")
+      .single();
+
+    if (updated.error) throw new Error(updated.error.message);
+    return updated.data as Person;
+  }
+
+  // Someone may already be on the board without a login (seeded roster, or a
+  // Slack-only teammate later). Link that row rather than duplicating them.
+  if (user.email) {
+    const claimed = await supabase
+      .from("people")
+      .update({ auth_user_id: user.id, name, avatar_url: avatarUrl })
+      .eq("email", user.email)
+      .is("auth_user_id", null)
+      .select("*")
+      .maybeSingle();
+
+    if (claimed.error) throw new Error(claimed.error.message);
+    if (claimed.data) return claimed.data as Person;
+  }
+
+  const created = await supabase
+    .from("people")
+    .insert({
+      auth_user_id: user.id,
+      email: user.email ?? null,
+      name,
+      avatar_url: avatarUrl,
+    })
+    .select("*")
+    .single();
+
+  if (created.error) throw new Error(created.error.message);
+  return created.data as Person;
+}
+
+export type CreateThanksResult =
+  | { ok: true; thanks: ThanksWithPeople }
+  | { ok: false; status: number; error: string };
+
+export async function createThanks(input: {
+  toPersonId: string;
+  reason: string;
+}): Promise<CreateThanksResult> {
+  const sender = await getCurrentPerson();
+  if (!sender) {
+    return { ok: false, status: 401, error: "Sign in with Google to say thanks." };
+  }
+
+  const reason = input.reason.trim();
+  if (!reason) {
+    return { ok: false, status: 400, error: "Add a reason for the thanks." };
+  }
+  if (reason.length > MAX_REASON_LENGTH) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Keep it under ${MAX_REASON_LENGTH} characters.`,
+    };
+  }
+  if (!input.toPersonId) {
+    return { ok: false, status: 400, error: "Pick who you want to thank." };
+  }
+  if (!ALLOW_SELF_THANKS && input.toPersonId === sender.id) {
+    return { ok: false, status: 400, error: "Pick a teammate other than yourself." };
+  }
+
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("thanks")
+    .insert({
+      from_person_id: sender.id,
+      to_person_id: input.toPersonId,
+      reason,
+      source: "web",
+    })
+    .select(THANKS_SELECT)
+    .single();
+
+  if (error) {
+    return { ok: false, status: 400, error: error.message };
+  }
+
+  return { ok: true, thanks: data as unknown as ThanksWithPeople };
 }
