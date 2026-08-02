@@ -6,17 +6,17 @@ import { getPerson, listThanksForPerson } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-export default function PersonPage({
+export default async function PersonPage({
   params,
 }: {
   params: { id: string };
 }) {
-  const person = getPerson(params.id);
+  const person = await getPerson(params.id);
   if (!person) {
     notFound();
   }
 
-  const { received, given } = listThanksForPerson(params.id);
+  const { received, given } = await listThanksForPerson(params.id);
 
   return (
     <div className="space-y-8">
@@ -33,7 +33,9 @@ export default function PersonPage({
           <h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-stone-900">
             {person.name}
           </h1>
-          <p className="mt-1 truncate text-sm text-stone-500">ID: {person.id}</p>
+          {person.email ? (
+            <p className="mt-1 truncate text-sm text-stone-500">{person.email}</p>
+          ) : null}
           <div className="mt-4 flex flex-wrap gap-3">
             <div className="rounded-xl bg-rose-50 px-3 py-2">
               <p className="text-lg font-semibold text-rose-700">

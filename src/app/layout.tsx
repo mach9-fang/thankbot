@@ -16,7 +16,7 @@ const sans = DM_Sans({
 export const metadata: Metadata = {
   title: "ThankBot — Who thanked you",
   description:
-    "A public board of teammate thanks, powered by Slack /thanks commands.",
+    "An appreciation board where teammates thank each other after signing in with Google.",
 };
 
 export default function RootLayout({

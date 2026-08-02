@@ -7,12 +7,12 @@ export async function GET(
   _request: Request,
   { params }: { params: { id: string } }
 ) {
-  const person = getPerson(params.id);
+  const person = await getPerson(params.id);
   if (!person) {
     return NextResponse.json({ error: "Person not found" }, { status: 404 });
   }
 
-  const history = listThanksForPerson(params.id);
+  const history = await listThanksForPerson(params.id);
   return NextResponse.json({
     person,
     received: history.received,

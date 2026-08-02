@@ -4,6 +4,6 @@ import { listPeople } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const people = listPeople();
+  const people = await listPeople();
   return NextResponse.json({ people });
 }
