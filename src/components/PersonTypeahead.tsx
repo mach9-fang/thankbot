@@ -41,14 +41,12 @@ export function PersonTypeahead({
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const available = people.filter((person) => !selectedIds.has(person.id));
-    if (!needle) return available.slice(0, 8);
+    if (!needle) return available;
 
-    return available
-      .filter((person) => {
-        const haystack = `${person.name} ${person.email ?? ""}`.toLowerCase();
-        return haystack.includes(needle);
-      })
-      .slice(0, 8);
+    return available.filter((person) => {
+      const haystack = `${person.name} ${person.email ?? ""}`.toLowerCase();
+      return haystack.includes(needle);
+    });
   }, [people, query, selectedIds]);
 
   useEffect(() => {
