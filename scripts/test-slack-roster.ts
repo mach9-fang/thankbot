@@ -79,7 +79,8 @@ async function main() {
     )) as typeof fetch;
 
   try {
-    const members = await listSlackWorkspaceMembers("xoxb-test");
+    const { members, error } = await listSlackWorkspaceMembers("xoxb-test");
+    assert.strictEqual(error, null);
     assert.strictEqual(members.length, 2);
     assert.deepStrictEqual(
       members.map((person) => person.id).sort(),
@@ -89,6 +90,19 @@ async function main() {
       members.find((p) => p.id === "U_ALICE")?.email,
       "alice@mach9.com"
     );
+
+    // Slack API errors must surface instead of silently returning nobody.
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ ok: false, error: "invalid_auth" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })) as typeof fetch;
+    const failed = await listSlackWorkspaceMembers("xoxb-bad");
+    assert.strictEqual(failed.error, "invalid_auth");
+    assert.strictEqual(failed.members.length, 0);
+
+    const noToken = await listSlackWorkspaceMembers("");
+    assert.strictEqual(noToken.error, "no_token");
   } finally {
     globalThis.fetch = originalFetch;
   }

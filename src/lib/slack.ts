@@ -265,12 +265,15 @@ export function slackMemberToProfile(
 /**
  * Paginate `users.list` for every human teammate in the Slack workspace.
  * Used to populate the web typeahead and to resolve plain `@handle` mentions.
+ * `error` carries the Slack API error code (e.g. `invalid_auth`,
+ * `missing_scope`) so callers can surface why the roster came back short.
  */
-export async function listSlackWorkspaceMembers(
-  botToken: string
-): Promise<SlackUserProfile[]> {
+export async function listSlackWorkspaceMembers(botToken: string): Promise<{
+  members: SlackUserProfile[];
+  error: string | null;
+}> {
   if (!botToken) {
-    return [];
+    return { members: [], error: "no_token" };
   }
 
   const people: SlackUserProfile[] = [];
@@ -300,7 +303,7 @@ export async function listSlackWorkspaceMembers(
       };
 
       if (!data.ok || !data.members) {
-        break;
+        return { members: people, error: data.error ?? "unknown_error" };
       }
 
       for (const member of data.members) {
@@ -311,11 +314,14 @@ export async function listSlackWorkspaceMembers(
       cursor = data.response_metadata?.next_cursor ?? "";
       if (!cursor) break;
     }
-  } catch {
-    return people;
+  } catch (error) {
+    return {
+      members: people,
+      error: error instanceof Error ? error.message : "fetch_failed",
+    };
   }
 
-  return people;
+  return { members: people, error: null };
 }
 
 /**

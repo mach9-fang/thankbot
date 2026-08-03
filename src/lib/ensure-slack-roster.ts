@@ -1,25 +1,29 @@
 import { unstable_cache } from "next/cache";
-import { syncSlackRoster } from "@/lib/sync-slack-roster";
+import { syncSlackRoster } from "./sync-slack-roster";
 
 /**
- * Sync at most once per half hour per server instance cache. Failures are
- * swallowed so a Slack outage never blanks the home page.
+ * Refresh the Slack roster at most once per half hour. Only successful syncs
+ * are cached — a missing token or Slack error is logged and retried on the
+ * next request instead of being silently remembered for 30 minutes.
  */
 export async function ensureSlackRosterSynced(): Promise<void> {
-  if (!process.env.SLACK_BOT_TOKEN) {
-    return;
-  }
-
   try {
     await unstable_cache(
       async () => {
-        await syncSlackRoster();
-        return true as const;
+        const result = await syncSlackRoster();
+        if (!result.ok) {
+          // Throw so unstable_cache does not memoize the failure.
+          throw new Error(result.error ?? "slack roster sync failed");
+        }
+        return result.synced;
       },
       ["slack-roster-sync"],
       { revalidate: 60 * 30 }
     )();
-  } catch {
-    // Keep serving whoever is already in Postgres.
+  } catch (error) {
+    console.error(
+      "[thankbot] Slack roster sync failed:",
+      error instanceof Error ? error.message : error
+    );
   }
 }

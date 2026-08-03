@@ -142,5 +142,11 @@ Open [http://localhost:3000](http://localhost:3000).
 | `pnpm start` | Run the production build |
 | `pnpm seed` | Load demo people + thanks (needs service role key) |
 | `pnpm sync-slack` | Import Slack workspace members into `people` so the web typeahead lists Mach9 colleagues |
+
+If the typeahead is missing colleagues, visit `/api/slack/sync` while signed
+in — it runs the sync and reports why it failed (e.g. `SLACK_BOT_TOKEN` not
+set on the deployment, or a Slack error such as `missing_scope` /
+`invalid_auth`). The same failure reason is logged server-side on every home
+page load until the sync succeeds.
 | `pnpm lint` | ESLint |
 | `pnpm tsx scripts/test-parse.ts` | Slack `/thanks` text parser assertions |

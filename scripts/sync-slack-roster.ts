@@ -25,8 +25,10 @@ async function main() {
   // Dynamic import after env load so Supabase clients see the keys.
   const { syncSlackRoster } = await import("../src/lib/sync-slack-roster");
   const result = await syncSlackRoster();
-  if (result.skipped) {
-    console.error("Slack sync skipped — missing SLACK_BOT_TOKEN.");
+  if (!result.ok) {
+    console.error(
+      `Slack sync failed after importing ${result.synced} people: ${result.error}`
+    );
     process.exit(1);
   }
   console.log(`Synced ${result.synced} Slack teammates into people.`);
