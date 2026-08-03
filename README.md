@@ -14,8 +14,9 @@ teammate, and everyone sees it on the feed.
 2. The home page form posts to `POST /api/thanks`, which sets the sender from
    the session — never from the request body.
 3. From Slack, `/thanks @person for …` hits `POST /api/slack/thanks`, which
-   upserts people by `slack_user_id` and writes a thanks with `source=slack`.
-   In a 1:1 DM you can omit the mention and ThankBot thanks the other person.
+   upserts people by `slack_user_id` and writes a thanks with `source=slack`,
+   then posts the receipt into the channel so the team sees it. In a 1:1 DM you
+   can omit the mention and ThankBot thanks the other person.
 4. The feed, leaderboard, and `/people/[id]` pages read straight from Postgres.
 
 ## Setup
@@ -61,10 +62,14 @@ Workspace org (external users then can't complete sign-in).
 1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps).
 2. Under **OAuth & Permissions**, add bot scopes:
    - `commands`
+   - `chat:write` (posts the thanks receipt so the whole channel sees it)
+   - `chat:write.public` (post in public channels without being invited first)
    - `users:read`
    - `users:read.email` (links Slack people to Google logins by email)
    - `im:read` and `channels:read` (so a 1:1 DM can omit the `@` mention)
 3. Install the app to your workspace and copy the **Bot User OAuth Token**.
+   Adding scopes to an existing app requires reinstalling it — without
+   `chat:write` the receipt is only visible to whoever ran the command.
 4. Under **Basic Information**, copy the **Signing Secret**.
 5. Under **Slash Commands**, create `/thanks` pointing at:
 
@@ -140,3 +145,4 @@ Open [http://localhost:3000](http://localhost:3000).
 | `pnpm seed` | Load demo people + thanks (needs service role key) |
 | `pnpm lint` | ESLint |
 | `pnpm tsx scripts/test-parse.ts` | Slack `/thanks` text parser assertions |
+| `pnpm tsx scripts/test-slack-receipt.ts` | Slack `/thanks` receipt visibility assertions (needs Supabase) |

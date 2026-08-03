@@ -9,7 +9,9 @@ import { siteUrl } from "@/lib/supabase/env";
 import {
   fetchSlackUser,
   parseThanksText,
+  postSlackChannelMessage,
   postSlackResponse,
+  replaceSlackResponse,
   resolveHandlesToUserIds,
   resolveSoleChannelPeer,
   verifySlackRequest,
@@ -18,11 +20,13 @@ import {
 
 export const dynamic = "force-dynamic";
 
-function slackResponse(text: string, inChannel = true) {
-  return NextResponse.json({
-    response_type: inChannel ? "in_channel" : "ephemeral",
-    text,
-  });
+/**
+ * Acknowledgements are always ephemeral: an `in_channel` acknowledgement also
+ * echoes the raw `/thanks …` text into the channel. The receipt everyone is
+ * meant to see is posted separately with `chat.postMessage`.
+ */
+function slackResponse(text: string) {
+  return NextResponse.json({ response_type: "ephemeral", text });
 }
 
 /** Outside Vercel there is no request context to extend; just let it run. */
@@ -52,8 +56,7 @@ async function recordThanks(
     if (recipientIds.length === 0) {
       await postSlackResponse(
         slash.response_url,
-        `I couldn't find ${handles.map((h) => `\`@${h}\``).join(", ")} in this workspace. Pick the name from Slack's autocomplete so it becomes a real mention.`,
-        false
+        `I couldn't find ${handles.map((h) => `\`@${h}\``).join(", ")} in this workspace. Pick the name from Slack's autocomplete so it becomes a real mention.`
       );
       return;
     }
@@ -73,8 +76,7 @@ async function recordThanks(
   if (recipientIds.length === 0) {
     await postSlackResponse(
       slash.response_url,
-      "Tag who you're thanking: `/thanks @person for <reason>`. (In a private DM I can't see the other person, so the mention is required.)",
-      false
+      "Tag who you're thanking: `/thanks @person for <reason>`. (In a private DM I can't see the other person, so the mention is required.)"
     );
     return;
   }
@@ -82,8 +84,7 @@ async function recordThanks(
   if (!reason) {
     await postSlackResponse(
       slash.response_url,
-      "Please include a reason. Example: `/thanks @alex for reviewing my PR`",
-      false
+      "Please include a reason. Example: `/thanks @alex for reviewing my PR`"
     );
     return;
   }
@@ -132,28 +133,63 @@ async function recordThanks(
     if (created.length === 0) {
       await postSlackResponse(
         slash.response_url,
-        lastError ??
-          "You can't thank yourself — tag a teammate instead.",
-        false
+        lastError ?? "You can't thank yourself — tag a teammate instead."
       );
       return;
     }
 
-    const lines = created.map(
-      ({ name, url }) =>
-        `:pray: ${sender.name} thanked *${name}*: ${reason}\n${url}`
+    const receipt = created
+      .map(
+        ({ name, url }) =>
+          `:pray: ${sender.name} thanked *${name}*: ${reason}\n${url}`
+      )
+      .join("\n\n");
+
+    // The point of thanking someone in Slack is that the team sees it, so the
+    // receipt has to be a real channel message rather than a reply on the
+    // command's (ephemeral) `response_url`.
+    const posted = await postSlackChannelMessage(
+      slash.channel_id,
+      receipt,
+      botToken
     );
 
-    await postSlackResponse(slash.response_url, lines.join("\n\n"));
+    if (posted.ok) {
+      await replaceSlackResponse(
+        slash.response_url,
+        ":white_check_mark: Posted your thanks here for everyone to see."
+      );
+      return;
+    }
+
+    // ThankBot can't always write to the conversation — a DM between two other
+    // people, or an install that predates the `chat:write` scope. Show the
+    // sender their receipt anyway, plus how to make it public next time.
+    await postSlackResponse(
+      slash.response_url,
+      `${receipt}\n\n${privateReceiptNote(posted.error, slash.channel_id)}`
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Something went wrong.";
     await postSlackResponse(
       slash.response_url,
-      `Could not record thanks: ${message}`,
-      false
+      `Could not record thanks: ${message}`
     );
   }
+}
+
+/** Explains why a recorded thanks ended up visible only to its sender. */
+function privateReceiptNote(error: string, channelId: string | undefined) {
+  if ((channelId ?? "").startsWith("D")) {
+    return "_Only you can see this — ThankBot can't post into a DM it isn't part of._";
+  }
+
+  if (error === "missing_scope" || error === "not_allowed_token_type") {
+    return "_Only you can see this — ThankBot needs the `chat:write` scope. Ask an admin to add it and reinstall the app._";
+  }
+
+  return `_Only you can see this — ThankBot couldn't post here (\`${error}\`). Try \`/invite @ThankBot\` in this channel._`;
 }
 
 export async function POST(request: Request) {
@@ -194,14 +230,13 @@ export async function POST(request: Request) {
   };
 
   if (!slash.user_id) {
-    return slackResponse("Could not identify who sent this command.", false);
+    return slackResponse("Could not identify who sent this command.");
   }
 
   const botToken = process.env.SLACK_BOT_TOKEN ?? "";
   if (!botToken) {
     return slackResponse(
-      "ThankBot is missing `SLACK_BOT_TOKEN` — ask an admin to finish setup.",
-      false
+      "ThankBot is missing `SLACK_BOT_TOKEN` — ask an admin to finish setup."
     );
   }
 
@@ -210,8 +245,7 @@ export async function POST(request: Request) {
       [
         "*Who do you want to thank, and for what?*",
         "Try: `/thanks @person for helping with the launch`",
-      ].join("\n"),
-      false
+      ].join("\n")
     );
   }
 
@@ -225,20 +259,18 @@ export async function POST(request: Request) {
 
   if (!hasRecipient && inPrivateDm) {
     return slackResponse(
-      "Tag who you're thanking: `/thanks @person for <reason>`. (In a private DM I can't see who else is here, so the mention is required.)",
-      false
+      "Tag who you're thanking: `/thanks @person for <reason>`. (In a private DM I can't see who else is here, so the mention is required.)"
     );
   }
 
   if (hasRecipient && !parsed.reason) {
     return slackResponse(
-      "Please include a reason. Example: `/thanks @alex for reviewing my PR`",
-      false
+      "Please include a reason. Example: `/thanks @alex for reviewing my PR`"
     );
   }
 
   // Slack gives us 3 seconds; the Slack API and database calls can take longer.
   runAfterResponse(recordThanks(slash, botToken, parsed));
 
-  return slackResponse("Recording your thanks…", false);
+  return slackResponse("Recording your thanks…");
 }

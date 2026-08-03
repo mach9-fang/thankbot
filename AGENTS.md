@@ -69,6 +69,11 @@ lets a single user thank themselves.
 ### Misc
 
 - `scripts/test-parse.ts` is a standalone assertion script (no test runner):
-  run it with `pnpm tsx scripts/test-parse.ts`.
+ run it with `pnpm tsx scripts/test-parse.ts`.
+- `scripts/test-slack-receipt.ts` drives the real `/api/slack/thanks` route
+ handler against a stand-in Slack (it patches `fetch`) and the local Supabase,
+ so `supabase start` and `.env.local` must be in place first. Run it with
+ `pnpm tsx scripts/test-slack-receipt.ts` (add `--print` to dump the resulting
+ Slack transcript with its "Only visible to you" markers).
 - Reinstalling deps or restarting Supabase does not require restarting `pnpm dev`
   for schema changes, but env-var changes in `.env.local` require a dev restart.
