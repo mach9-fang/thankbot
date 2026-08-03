@@ -216,6 +216,108 @@ function normalizeHandle(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+type SlackListMember = {
+  id: string;
+  name?: string;
+  real_name?: string;
+  deleted?: boolean;
+  is_bot?: boolean;
+  is_app_user?: boolean;
+  is_restricted?: boolean;
+  is_ultra_restricted?: boolean;
+  profile?: {
+    display_name?: string;
+    real_name?: string;
+    email?: string;
+    image_72?: string;
+  };
+};
+
+/** Full members only — skip bots, apps, guests, and deactivated accounts. */
+export function isSlackTeammate(member: SlackListMember): boolean {
+  if (!member.id || member.id === "USLACKBOT") return false;
+  if (member.deleted || member.is_bot || member.is_app_user) return false;
+  if (member.is_restricted || member.is_ultra_restricted) return false;
+  return true;
+}
+
+export function slackMemberToProfile(
+  member: SlackListMember
+): SlackUserProfile | null {
+  if (!isSlackTeammate(member)) return null;
+
+  const name =
+    member.profile?.real_name ||
+    member.real_name ||
+    member.profile?.display_name ||
+    member.name ||
+    member.id;
+
+  return {
+    id: member.id,
+    name,
+    avatar_url: member.profile?.image_72 ?? null,
+    email: member.profile?.email ?? null,
+    is_bot: false,
+  };
+}
+
+/**
+ * Paginate `users.list` for every human teammate in the Slack workspace.
+ * Used to populate the web typeahead and to resolve plain `@handle` mentions.
+ */
+export async function listSlackWorkspaceMembers(
+  botToken: string
+): Promise<SlackUserProfile[]> {
+  if (!botToken) {
+    return [];
+  }
+
+  const people: SlackUserProfile[] = [];
+  let cursor = "";
+
+  try {
+    // Bounded pagination keeps this predictable on large workspaces.
+    for (let page = 0; page < 10; page += 1) {
+      const params = new URLSearchParams({ limit: "200" });
+      if (cursor) params.set("cursor", cursor);
+
+      const res = await fetch("https://slack.com/api/users.list", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${botToken}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: params,
+        cache: "no-store",
+      });
+
+      const data = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        members?: SlackListMember[];
+        response_metadata?: { next_cursor?: string };
+      };
+
+      if (!data.ok || !data.members) {
+        break;
+      }
+
+      for (const member of data.members) {
+        const profile = slackMemberToProfile(member);
+        if (profile) people.push(profile);
+      }
+
+      cursor = data.response_metadata?.next_cursor ?? "";
+      if (!cursor) break;
+    }
+  } catch {
+    return people;
+  }
+
+  return people;
+}
+
 /**
  * Map plain `@handle` text back to Slack user ids. Needed when the slash
  * command isn't configured to escape mentions, since then Slack sends the
@@ -251,17 +353,7 @@ export async function resolveHandlesToUserIds(
 
       const data = (await res.json()) as {
         ok: boolean;
-        members?: Array<{
-          id: string;
-          name?: string;
-          real_name?: string;
-          deleted?: boolean;
-          is_bot?: boolean;
-          profile?: {
-            display_name?: string;
-            real_name?: string;
-          };
-        }>;
+        members?: SlackListMember[];
         response_metadata?: { next_cursor?: string };
       };
 
@@ -270,7 +362,7 @@ export async function resolveHandlesToUserIds(
       }
 
       for (const member of data.members) {
-        if (member.deleted || member.is_bot) continue;
+        if (!isSlackTeammate(member)) continue;
 
         const aliases = [
           member.name,

@@ -11,12 +11,15 @@ teammate, and everyone sees it on the feed.
 
 1. Sign in with Google (Supabase Auth). First login creates the employee's row
    in `people`, or claims an existing row with the same email.
-2. The home page form posts to `POST /api/thanks`, which sets the sender from
+2. When a signed-in visitor opens the home page, ThankBot syncs Slack workspace
+   members into `people` (cached ~30 minutes) so the typeahead lists Mach9
+   colleagues — not only people who have already signed in.
+3. The home page form posts to `POST /api/thanks`, which sets the sender from
    the session — never from the request body.
-3. From Slack, `/thanks @person for …` hits `POST /api/slack/thanks`, which
+4. From Slack, `/thanks @person for …` hits `POST /api/slack/thanks`, which
    upserts people by `slack_user_id` and writes a thanks with `source=slack`.
    In a 1:1 DM you can omit the mention and ThankBot thanks the other person.
-4. The feed, leaderboard, and `/people/[id]` pages read straight from Postgres.
+5. The feed, leaderboard, and `/people/[id]` pages read straight from Postgres.
 
 ## Setup
 
@@ -138,5 +141,6 @@ Open [http://localhost:3000](http://localhost:3000).
 | `pnpm build` | Production build |
 | `pnpm start` | Run the production build |
 | `pnpm seed` | Load demo people + thanks (needs service role key) |
+| `pnpm sync-slack` | Import Slack workspace members into `people` so the web typeahead lists Mach9 colleagues |
 | `pnpm lint` | ESLint |
 | `pnpm tsx scripts/test-parse.ts` | Slack `/thanks` text parser assertions |

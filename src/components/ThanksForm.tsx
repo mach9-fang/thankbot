@@ -152,8 +152,8 @@ export function ThanksForm({
 
       {teammates.length === 0 ? (
         <p className="mt-4 text-sm text-ink-500">
-          No teammates on the board yet — once a colleague signs in, they show up
-          here.
+          No teammates yet — connect Slack (`SLACK_BOT_TOKEN`) so Mach9
+          colleagues appear here, or ask a colleague to sign in.
         </p>
       ) : null}
 

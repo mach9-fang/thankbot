@@ -2,6 +2,7 @@ import { Leaderboard } from "@/components/Leaderboard";
 import { ThanksCard } from "@/components/ThanksCard";
 import { ThanksForm } from "@/components/ThanksForm";
 import { getCurrentPerson, listPeople, listThanks } from "@/lib/db";
+import { ensureSlackRosterSynced } from "@/lib/ensure-slack-roster";
 
 export const dynamic = "force-dynamic";
 
@@ -10,10 +11,16 @@ export default async function HomePage({
 }: {
   searchParams: { error?: string };
 }) {
-  const [thanks, people, currentPerson] = await Promise.all([
+  const currentPerson = await getCurrentPerson();
+  // Signed-in visitors need the full Slack roster in the typeahead, not only
+  // people who have already signed in or been thanked.
+  if (currentPerson) {
+    await ensureSlackRosterSynced();
+  }
+
+  const [thanks, people] = await Promise.all([
     listThanks(50),
     listPeople(),
-    getCurrentPerson(),
   ]);
 
   return (
