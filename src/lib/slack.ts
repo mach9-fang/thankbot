@@ -80,10 +80,18 @@ export function verifySlackRequest(
   }
 }
 
+export type SlackUserProfile = {
+  id: string;
+  name: string;
+  avatar_url: string | null;
+  email: string | null;
+  is_bot: boolean;
+};
+
 export async function fetchSlackUser(
   userId: string,
   botToken: string
-): Promise<{ id: string; name: string; avatar_url: string | null } | null> {
+): Promise<SlackUserProfile | null> {
   if (!botToken) {
     return null;
   }
@@ -105,7 +113,12 @@ export async function fetchSlackUser(
         id: string;
         real_name?: string;
         name?: string;
-        profile?: { image_72?: string; real_name?: string };
+        is_bot?: boolean;
+        profile?: {
+          image_72?: string;
+          real_name?: string;
+          email?: string;
+        };
       };
     };
 
@@ -123,7 +136,66 @@ export async function fetchSlackUser(
       id: data.user.id,
       name,
       avatar_url: data.user.profile?.image_72 ?? null,
+      email: data.user.profile?.email ?? null,
+      is_bot: Boolean(data.user.is_bot),
     };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * When `/thanks` has no @mention, thank the other human in a 1:1 chat
+ * (DM or two-person channel). Returns null if the channel has zero or
+ * multiple other humans.
+ */
+export async function resolveSoleChannelPeer(
+  channelId: string | undefined,
+  senderId: string,
+  botToken: string
+): Promise<string | null> {
+  if (!channelId || !botToken) {
+    return null;
+  }
+
+  try {
+    const res = await fetch("https://slack.com/api/conversations.members", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${botToken}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ channel: channelId, limit: "100" }),
+      cache: "no-store",
+    });
+
+    const data = (await res.json()) as {
+      ok: boolean;
+      members?: string[];
+    };
+
+    if (!data.ok || !data.members) {
+      return null;
+    }
+
+    const others = data.members.filter((id) => id !== senderId);
+    if (others.length === 0) {
+      return null;
+    }
+
+    if (others.length === 1) {
+      return others[0];
+    }
+
+    const profiles = await Promise.all(
+      others.map((id) => fetchSlackUser(id, botToken))
+    );
+    const humans = profiles.filter(
+      (profile): profile is SlackUserProfile =>
+        Boolean(profile) && !profile!.is_bot
+    );
+
+    return humans.length === 1 ? humans[0].id : null;
   } catch {
     return null;
   }

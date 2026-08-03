@@ -1,3 +1,4 @@
+import { createServiceSupabase } from "./supabase/admin";
 import { createServerSupabase } from "./supabase/server";
 import type {
   Person,
@@ -203,6 +204,131 @@ export async function createThanks(input: {
       to_person_id: input.toPersonId,
       reason,
       source: "web",
+    })
+    .select(THANKS_SELECT)
+    .single();
+
+  if (error) {
+    return { ok: false, status: 400, error: error.message };
+  }
+
+  return { ok: true, thanks: data as unknown as ThanksWithPeople };
+}
+
+/**
+ * Find or create a `people` row keyed by Slack user id. Uses the service
+ * role because Slack has no Supabase session (RLS would block the write).
+ * Prefers linking an existing email match so Google login later claims the
+ * same row.
+ */
+export async function upsertPersonBySlackId(input: {
+  slackUserId: string;
+  name: string;
+  avatarUrl?: string | null;
+  email?: string | null;
+}): Promise<Person> {
+  const supabase = createServiceSupabase();
+  const { slackUserId, name, avatarUrl = null, email = null } = input;
+
+  const existing = await supabase
+    .from("people")
+    .select("*")
+    .eq("slack_user_id", slackUserId)
+    .maybeSingle();
+
+  if (existing.error) throw new Error(existing.error.message);
+
+  if (existing.data) {
+    const person = existing.data as Person;
+    const nextName =
+      name && name !== slackUserId
+        ? name
+        : person.name && person.name !== slackUserId
+          ? person.name
+          : name;
+    const updated = await supabase
+      .from("people")
+      .update({
+        name: nextName,
+        avatar_url: avatarUrl ?? person.avatar_url,
+        email: person.email ?? email,
+      })
+      .eq("id", person.id)
+      .select("*")
+      .single();
+
+    if (updated.error) throw new Error(updated.error.message);
+    return updated.data as Person;
+  }
+
+  if (email) {
+    const claimed = await supabase
+      .from("people")
+      .update({
+        slack_user_id: slackUserId,
+        name,
+        avatar_url: avatarUrl,
+      })
+      .eq("email", email)
+      .is("slack_user_id", null)
+      .select("*")
+      .maybeSingle();
+
+    if (claimed.error) throw new Error(claimed.error.message);
+    if (claimed.data) return claimed.data as Person;
+  }
+
+  const created = await supabase
+    .from("people")
+    .insert({
+      slack_user_id: slackUserId,
+      email,
+      name,
+      avatar_url: avatarUrl,
+    })
+    .select("*")
+    .single();
+
+  if (created.error) throw new Error(created.error.message);
+  return created.data as Person;
+}
+
+/** Insert a thanks row from a verified Slack slash command. */
+export async function createSlackThanks(input: {
+  fromPersonId: string;
+  toPersonId: string;
+  reason: string;
+}): Promise<CreateThanksResult> {
+  const reason = input.reason.trim();
+  if (!reason) {
+    return { ok: false, status: 400, error: "Add a reason for the thanks." };
+  }
+  if (reason.length > MAX_REASON_LENGTH) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Keep it under ${MAX_REASON_LENGTH} characters.`,
+    };
+  }
+  if (!input.toPersonId) {
+    return { ok: false, status: 400, error: "Pick who you want to thank." };
+  }
+  if (!ALLOW_SELF_THANKS && input.toPersonId === input.fromPersonId) {
+    return {
+      ok: false,
+      status: 400,
+      error: "Pick a teammate other than yourself.",
+    };
+  }
+
+  const supabase = createServiceSupabase();
+  const { data, error } = await supabase
+    .from("thanks")
+    .insert({
+      from_person_id: input.fromPersonId,
+      to_person_id: input.toPersonId,
+      reason,
+      source: "slack",
     })
     .select(THANKS_SELECT)
     .single();
