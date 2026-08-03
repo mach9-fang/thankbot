@@ -10,6 +10,7 @@ import {
   fetchSlackUser,
   parseThanksText,
   postSlackResponse,
+  resolveHandlesToUserIds,
   resolveSoleChannelPeer,
   verifySlackRequest,
   type SlackSlashPayload,
@@ -42,8 +43,21 @@ async function recordThanks(
   botToken: string,
   parsed: ReturnType<typeof parseThanksText>
 ) {
-  const { recipientIds: mentioned, reason } = parsed;
+  const { recipientIds: mentioned, handles, reason } = parsed;
   let recipientIds = mentioned;
+
+  if (recipientIds.length === 0 && handles.length > 0) {
+    recipientIds = await resolveHandlesToUserIds(handles, botToken);
+
+    if (recipientIds.length === 0) {
+      await postSlackResponse(
+        slash.response_url,
+        `I couldn't find ${handles.map((h) => `\`@${h}\``).join(", ")} in this workspace. Pick the name from Slack's autocomplete so it becomes a real mention.`,
+        false
+      );
+      return;
+    }
+  }
 
   if (recipientIds.length === 0) {
     const peerId = await resolveSoleChannelPeer(
@@ -205,14 +219,17 @@ export async function POST(request: Request) {
   const parsed = parseThanksText(slash.text);
   const inPrivateDm = (slash.channel_id ?? "").startsWith("D");
 
-  if (parsed.recipientIds.length === 0 && inPrivateDm) {
+  const hasRecipient =
+    parsed.recipientIds.length > 0 || parsed.handles.length > 0;
+
+  if (!hasRecipient && inPrivateDm) {
     return slackResponse(
       "Tag who you're thanking: `/thanks @person for <reason>`. (In a private DM I can't see who else is here, so the mention is required.)",
       false
     );
   }
 
-  if (parsed.recipientIds.length > 0 && !parsed.reason) {
+  if (hasRecipient && !parsed.reason) {
     return slackResponse(
       "Please include a reason. Example: `/thanks @alex for reviewing my PR`",
       false

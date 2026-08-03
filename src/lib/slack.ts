@@ -15,11 +15,15 @@ export type SlackSlashPayload = {
 };
 
 /**
- * Parse `/thanks @alice @bob for shipping the release`
- * Slack user mentions look like `<@U123ABCDEF>` or `<@U123ABCDEF|alice>`.
+ * Parse `/thanks @alice @bob for shipping the release`.
+ *
+ * Slack only sends `<@U123ABCDEF>` when the slash command has "escape
+ * channels, users, and links" turned on. Otherwise mentions arrive as plain
+ * `@alice` text, so those handles come back separately for name lookup.
  */
 export function parseThanksText(text: string): {
   recipientIds: string[];
+  handles: string[];
   reason: string;
 } {
   // Slack IDs are typically like U123ABCDEF; allow underscores for local/demo IDs too
@@ -31,15 +35,23 @@ export function parseThanksText(text: string): {
     recipientIds.push(match[1]);
   }
 
-  let reason = text
-    .replace(/<@([A-Z0-9_]+)(?:\|[^>]+)?>/gi, " ")
+  const withoutEscaped = text.replace(/<@([A-Z0-9_]+)(?:\|[^>]+)?>/gi, " ");
+
+  const handlePattern = /(?:^|\s)@([A-Za-z0-9._'-]+)/g;
+  const handles: string[] = [];
+  while ((match = handlePattern.exec(withoutEscaped)) !== null) {
+    handles.push(match[1]);
+  }
+
+  let reason = withoutEscaped
+    .replace(/(?:^|\s)@[A-Za-z0-9._'-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
   // Drop a leading "for" if present: "/thanks @bob for helping"
   reason = reason.replace(/^for\s+/i, "").trim();
 
-  return { recipientIds, reason };
+  return { recipientIds, handles, reason };
 }
 
 export function verifySlackRequest(
@@ -198,6 +210,102 @@ export async function resolveSoleChannelPeer(
   } catch {
     return null;
   }
+}
+
+function normalizeHandle(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Map plain `@handle` text back to Slack user ids. Needed when the slash
+ * command isn't configured to escape mentions, since then Slack sends the
+ * display name instead of the id.
+ */
+export async function resolveHandlesToUserIds(
+  handles: string[],
+  botToken: string
+): Promise<string[]> {
+  if (handles.length === 0 || !botToken) {
+    return [];
+  }
+
+  const wanted = new Set(handles.map(normalizeHandle));
+  const found = new Map<string, string>();
+  let cursor = "";
+
+  try {
+    // Bounded pagination keeps this predictable on large workspaces.
+    for (let page = 0; page < 5; page += 1) {
+      const params = new URLSearchParams({ limit: "200" });
+      if (cursor) params.set("cursor", cursor);
+
+      const res = await fetch("https://slack.com/api/users.list", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${botToken}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: params,
+        cache: "no-store",
+      });
+
+      const data = (await res.json()) as {
+        ok: boolean;
+        members?: Array<{
+          id: string;
+          name?: string;
+          real_name?: string;
+          deleted?: boolean;
+          is_bot?: boolean;
+          profile?: {
+            display_name?: string;
+            real_name?: string;
+          };
+        }>;
+        response_metadata?: { next_cursor?: string };
+      };
+
+      if (!data.ok || !data.members) {
+        break;
+      }
+
+      for (const member of data.members) {
+        if (member.deleted || member.is_bot) continue;
+
+        const aliases = [
+          member.name,
+          member.real_name,
+          member.profile?.display_name,
+          member.profile?.real_name,
+        ];
+
+        for (const alias of aliases) {
+          if (!alias) continue;
+          const key = normalizeHandle(alias);
+          if (wanted.has(key) && !found.has(key)) {
+            found.set(key, member.id);
+          }
+        }
+      }
+
+      if (found.size === wanted.size) break;
+
+      cursor = data.response_metadata?.next_cursor ?? "";
+      if (!cursor) break;
+    }
+  } catch {
+    return [];
+  }
+
+  // Preserve the order the handles were typed in.
+  const ordered: string[] = [];
+  for (const handle of handles) {
+    const id = found.get(normalizeHandle(handle));
+    if (id && !ordered.includes(id)) {
+      ordered.push(id);
+    }
+  }
+  return ordered;
 }
 
 /**
