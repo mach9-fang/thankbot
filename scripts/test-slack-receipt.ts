@@ -163,17 +163,34 @@ async function settle() {
 
 async function test(name: string, fn: () => Promise<void>) {
   slack = new FakeSlack();
-  await fn();
-  console.log(`  ok  ${name}`);
-
-  if (process.argv.includes("--print")) {
-    for (const message of slack.messages) {
-      const audience =
-        message.audience === "channel"
-          ? "#thankbot-feedback"
-          : "Only visible to you";
-      console.log(`      [${audience}] ${message.text.replace(/\n/g, "\n        ")}`);
+  try {
+    await fn();
+    console.log(`  ok  ${name}`);
+  } catch (error) {
+    console.log(`FAIL  ${name}`);
+    throw error;
+  } finally {
+    // The transcript is what every assertion here is really about, so it is
+    // worth seeing on a failure as well as on demand.
+    if (process.argv.includes("--print")) {
+      printTranscript();
     }
+  }
+}
+
+function printTranscript() {
+  if (slack.messages.length === 0) {
+    console.log("      (nobody was sent anything)");
+  }
+
+  for (const message of slack.messages) {
+    const audience =
+      message.audience === "channel"
+        ? "#thankbot-feedback"
+        : "Only visible to you";
+    console.log(
+      `      [${audience}] ${message.text.replace(/\n/g, "\n        ")}`
+    );
   }
 }
 
