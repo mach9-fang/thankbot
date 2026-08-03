@@ -3,19 +3,22 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { Person, PersonSummary } from "@/lib/types";
+import { PersonTypeahead } from "./PersonTypeahead";
 
 const MAX_REASON_LENGTH = 500;
 const ALLOW_SELF_THANKS = process.env.NEXT_PUBLIC_ALLOW_SELF_THANKS === "true";
+
+type FormPerson = PersonSummary & { email?: string | null };
 
 export function ThanksForm({
   currentPerson,
   people,
 }: {
   currentPerson: Person | null;
-  people: PersonSummary[];
+  people: FormPerson[];
 }) {
   const router = useRouter();
-  const [toPersonId, setToPersonId] = useState("");
+  const [recipients, setRecipients] = useState<FormPerson[]>([]);
   const [reason, setReason] = useState("");
   const [status, setStatus] = useState<"idle" | "sending">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -51,27 +54,49 @@ export function ThanksForm({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    if (recipients.length === 0) {
+      setError("Pick at least one teammate.");
+      return;
+    }
+
     setStatus("sending");
 
     try {
       const response = await fetch("/api/thanks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to_person_id: toPersonId, reason }),
+        body: JSON.stringify({
+          to_person_ids: recipients.map((person) => person.id),
+          reason,
+        }),
       });
 
       const payload = (await response.json()) as {
         error?: string;
         thanks?: { id: string };
+        thanks_list?: { id: string }[];
       };
 
-      if (!response.ok || !payload.thanks?.id) {
+      const created =
+        payload.thanks_list ?? (payload.thanks ? [payload.thanks] : []);
+
+      if (!response.ok || created.length === 0) {
         setError(payload.error ?? "Could not send that thanks.");
         setStatus("idle");
         return;
       }
 
-      router.push(`/thanks/${payload.thanks.id}`);
+      if (created.length === 1) {
+        router.push(`/thanks/${created[0].id}`);
+        return;
+      }
+
+      setRecipients([]);
+      setReason("");
+      setStatus("idle");
+      router.push("/");
+      router.refresh();
     } catch {
       setError("Network error — try again.");
       setStatus("idle");
@@ -90,27 +115,21 @@ export function ThanksForm({
         Posting as {currentPerson.name}
       </p>
 
-      <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,220px)_1fr]">
-        <label className="block">
-          <span className="text-sm font-medium text-ink-700">Teammate</span>
-          <select
-            value={toPersonId}
-            onChange={(event) => setToPersonId(event.target.value)}
-            required
-            className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-          >
-            <option value="">Choose someone…</option>
-            {teammates.map((person) => (
-              <option key={person.id} value={person.id}>
-                {person.id === currentPerson.id
-                  ? `${person.name} (you)`
-                  : person.name}
-              </option>
-            ))}
-          </select>
-        </label>
+      <label className="mt-4 block">
+        <span className="text-sm font-medium text-ink-700">Teammates</span>
+        <div className="mt-1.5">
+          <PersonTypeahead
+            people={teammates}
+            selected={recipients}
+            onChange={setRecipients}
+            disabled={status === "sending"}
+            placeholder="Search Mach9 teammates…"
+          />
+        </div>
+      </label>
 
-        <label className="block">
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+        <label className="block min-w-0 flex-1">
           <span className="text-sm font-medium text-ink-700">For what?</span>
           <input
             value={reason}
@@ -121,6 +140,14 @@ export function ThanksForm({
             className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 outline-none transition placeholder:text-ink-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
           />
         </label>
+
+        <button
+          type="submit"
+          disabled={status === "sending" || teammates.length === 0}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-brand-600 to-brand-400 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-600/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 sm:mb-0"
+        >
+          {status === "sending" ? "Sending…" : "Send thanks"}
+        </button>
       </div>
 
       {teammates.length === 0 ? (
@@ -130,16 +157,9 @@ export function ThanksForm({
         </p>
       ) : null}
 
-      <div className="mt-5 flex flex-wrap items-center gap-3">
-        <button
-          type="submit"
-          disabled={status === "sending" || teammates.length === 0}
-          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-brand-600 to-brand-400 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-600/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {status === "sending" ? "Sending…" : "Send thanks"}
-        </button>
-        {error ? <span className="text-sm text-heart-600">{error}</span> : null}
-      </div>
+      {error ? (
+        <p className="mt-3 text-right text-sm text-heart-600">{error}</p>
+      ) : null}
     </form>
   );
 }

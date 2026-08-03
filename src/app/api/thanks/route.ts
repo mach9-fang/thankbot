@@ -19,23 +19,63 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Expected a JSON body." }, { status: 400 });
   }
 
-  const { to_person_id: toPersonId, reason } = (body ?? {}) as {
+  const {
+    to_person_id: toPersonId,
+    to_person_ids: toPersonIds,
+    reason,
+  } = (body ?? {}) as {
     to_person_id?: unknown;
+    to_person_ids?: unknown;
     reason?: unknown;
   };
 
-  if (typeof toPersonId !== "string" || typeof reason !== "string") {
+  if (typeof reason !== "string") {
+    return NextResponse.json({ error: "`reason` is required." }, { status: 400 });
+  }
+
+  const recipientIds = normalizeRecipientIds(toPersonIds, toPersonId);
+  if (recipientIds.length === 0) {
     return NextResponse.json(
-      { error: "`to_person_id` and `reason` are required." },
+      { error: "Pick at least one teammate to thank." },
       { status: 400 }
     );
   }
 
-  const result = await createThanks({ toPersonId, reason });
-
-  if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+  const created = [];
+  for (const id of recipientIds) {
+    const result = await createThanks({ toPersonId: id, reason });
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+    created.push(result.thanks);
   }
 
-  return NextResponse.json({ thanks: result.thanks }, { status: 201 });
+  return NextResponse.json(
+    {
+      thanks: created[0],
+      thanks_list: created,
+    },
+    { status: 201 }
+  );
+}
+
+function normalizeRecipientIds(
+  toPersonIds: unknown,
+  toPersonId: unknown
+): string[] {
+  const ids: string[] = [];
+
+  if (Array.isArray(toPersonIds)) {
+    for (const value of toPersonIds) {
+      if (typeof value === "string" && value && !ids.includes(value)) {
+        ids.push(value);
+      }
+    }
+  }
+
+  if (ids.length === 0 && typeof toPersonId === "string" && toPersonId) {
+    ids.push(toPersonId);
+  }
+
+  return ids;
 }
