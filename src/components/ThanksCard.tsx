@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ThanksWithPeople } from "@/lib/types";
+import { emojifyText } from "@/lib/emoji";
 import { Avatar } from "./Avatar";
 
 export function formatThanksWhen(iso: string) {
@@ -12,6 +13,8 @@ export function formatThanksWhen(iso: string) {
 }
 
 export function ThanksCard({ thanks }: { thanks: ThanksWithPeople }) {
+  const reason = emojifyText(thanks.reason);
+
   return (
     <Link
       href={`/thanks/${thanks.id}`}
@@ -30,7 +33,7 @@ export function ThanksCard({ thanks }: { thanks: ThanksWithPeople }) {
             </span>
           </p>
           <p className="mt-2 text-lg leading-relaxed text-stone-900">
-            “{thanks.reason}”
+            “{reason}”
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-stone-400">
             <time dateTime={thanks.created_at}>

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { formatThanksWhen } from "@/components/ThanksCard";
 import { getThanks } from "@/lib/db";
+import { emojifyText } from "@/lib/emoji";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,7 @@ export async function generateMetadata({
 
   return {
     title: `${thanks.from_person.name} thanked ${thanks.to_person.name} — ThankBot`,
-    description: thanks.reason,
+    description: emojifyText(thanks.reason),
   };
 }
 
@@ -32,6 +33,8 @@ export default async function ThanksPage({
   if (!thanks) {
     notFound();
   }
+
+  const reason = emojifyText(thanks.reason);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -89,7 +92,7 @@ export default async function ThanksPage({
 
         <div className="px-6 py-10 sm:px-10 sm:py-14">
           <blockquote className="font-[family-name:var(--font-display)] text-3xl font-medium leading-snug tracking-tight text-stone-900 sm:text-4xl sm:leading-snug">
-            “{thanks.reason}”
+            “{reason}”
           </blockquote>
 
           <div className="mt-10 flex flex-wrap items-center gap-3 text-sm text-stone-500">

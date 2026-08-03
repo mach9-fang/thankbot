@@ -1,5 +1,6 @@
 import { createServiceSupabase } from "./supabase/admin";
 import { createServerSupabase } from "./supabase/server";
+import { emojifyText } from "./emoji";
 import type {
   Person,
   PersonWithStats,
@@ -190,7 +191,7 @@ export async function createThanks(input: {
     return { ok: false, status: 401, error: "Sign in with Google to say thanks." };
   }
 
-  const reason = input.reason.trim();
+  const reason = emojifyText(input.reason.trim());
   if (!reason) {
     return { ok: false, status: 400, error: "Add a reason for the thanks." };
   }
@@ -311,7 +312,7 @@ export async function createSlackThanks(input: {
   toPersonId: string;
   reason: string;
 }): Promise<CreateThanksResult> {
-  const reason = input.reason.trim();
+  const reason = emojifyText(input.reason.trim());
   if (!reason) {
     return { ok: false, status: 400, error: "Add a reason for the thanks." };
   }
