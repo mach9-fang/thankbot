@@ -13,34 +13,21 @@ export function formatThanksWhen(iso: string) {
 
 export function ThanksCard({ thanks }: { thanks: ThanksWithPeople }) {
   return (
-    <article className="relative rounded-2xl border border-rose-100/80 bg-white/80 p-5 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:shadow-md">
-      <Link
-        href={`/thanks/${thanks.id}`}
-        className="absolute inset-0 z-0 rounded-2xl"
-        aria-label={`${thanks.from_person.name} thanked ${thanks.to_person.name}`}
-      />
-      <div className="relative z-10 flex items-start gap-4">
-        <Link
-          href={`/people/${thanks.to_person.id}`}
-          className="relative z-10 shrink-0"
-        >
-          <Avatar person={thanks.to_person} />
-        </Link>
+    <Link
+      href={`/thanks/${thanks.id}`}
+      className="group block rounded-2xl border border-rose-100/80 bg-white/80 p-5 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:border-rose-200 hover:shadow-md"
+    >
+      <article className="flex items-start gap-4">
+        <Avatar person={thanks.to_person} />
         <div className="min-w-0 flex-1">
           <p className="text-sm text-stone-500">
-            <Link
-              href={`/people/${thanks.from_person.id}`}
-              className="relative z-10 font-medium text-stone-800 hover:text-rose-600"
-            >
+            <span className="font-medium text-stone-800 group-hover:text-rose-600">
               {thanks.from_person.name}
-            </Link>{" "}
+            </span>{" "}
             thanked{" "}
-            <Link
-              href={`/people/${thanks.to_person.id}`}
-              className="relative z-10 font-medium text-stone-800 hover:text-rose-600"
-            >
+            <span className="font-medium text-stone-800 group-hover:text-rose-600">
               {thanks.to_person.name}
-            </Link>
+            </span>
           </p>
           <p className="mt-2 text-lg leading-relaxed text-stone-900">
             “{thanks.reason}”
@@ -55,7 +42,7 @@ export function ThanksCard({ thanks }: { thanks: ThanksWithPeople }) {
             </span>
           </div>
         </div>
-      </div>
-    </article>
+      </article>
+    </Link>
   );
 }
