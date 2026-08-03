@@ -311,11 +311,39 @@ export async function resolveHandlesToUserIds(
 /**
  * Slack only waits 3 seconds for a slash command, so the real work replies
  * later through the command's `response_url`.
+ *
+ * These replies are always private to the person who ran the command. Slack
+ * locks a command's visibility in at acknowledgement time, and ThankBot
+ * acknowledges ephemerally so the raw `/thanks …` text is never echoed into
+ * the channel — sending `response_type: "in_channel"` here would be silently
+ * downgraded back to ephemeral. Anything the whole channel should see goes
+ * through `postSlackChannelMessage` instead.
  */
 export async function postSlackResponse(
   responseUrl: string | undefined,
-  text: string,
-  inChannel = true
+  text: string
+): Promise<void> {
+  await sendToResponseUrl(responseUrl, { response_type: "ephemeral", text });
+}
+
+/**
+ * Swap out an earlier `response_url` reply — used to clear the "Recording your
+ * thanks…" placeholder once the receipt has landed in the channel.
+ */
+export async function replaceSlackResponse(
+  responseUrl: string | undefined,
+  text: string
+): Promise<void> {
+  await sendToResponseUrl(responseUrl, {
+    response_type: "ephemeral",
+    text,
+    replace_original: true,
+  });
+}
+
+async function sendToResponseUrl(
+  responseUrl: string | undefined,
+  payload: Record<string, unknown>
 ): Promise<void> {
   if (!responseUrl) {
     return;
@@ -325,13 +353,78 @@ export async function postSlackResponse(
     await fetch(responseUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        response_type: inChannel ? "in_channel" : "ephemeral",
-        text,
-      }),
+      body: JSON.stringify(payload),
       cache: "no-store",
     });
   } catch {
     // Slack will have already shown the acknowledgement; nothing to recover.
+  }
+}
+
+export type SlackPostResult = { ok: true } | { ok: false; error: string };
+
+async function callSlackApi(
+  method: string,
+  botToken: string,
+  args: Record<string, string>
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`https://slack.com/api/${method}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${botToken}`,
+      "Content-Type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify(args),
+    cache: "no-store",
+  });
+
+  return (await res.json()) as { ok: boolean; error?: string };
+}
+
+/**
+ * Post a real channel message that everyone in the conversation can read.
+ *
+ * This is the only way to make a slash command's result public after an
+ * ephemeral acknowledgement: Slack fixes a message's visibility for life when
+ * it is issued, so a delayed `response_url` reply can never be promoted from
+ * ephemeral to `in_channel`.
+ */
+export async function postSlackChannelMessage(
+  channelId: string | undefined,
+  text: string,
+  botToken: string
+): Promise<SlackPostResult> {
+  if (!channelId) {
+    return { ok: false, error: "channel_not_found" };
+  }
+  if (!botToken) {
+    return { ok: false, error: "not_authed" };
+  }
+
+  try {
+    let data = await callSlackApi("chat.postMessage", botToken, {
+      channel: channelId,
+      text,
+    });
+
+    // A public channel nobody invited ThankBot to is still joinable.
+    if (!data.ok && data.error === "not_in_channel") {
+      const joined = await callSlackApi("conversations.join", botToken, {
+        channel: channelId,
+      });
+      if (joined.ok) {
+        data = await callSlackApi("chat.postMessage", botToken, {
+          channel: channelId,
+          text,
+        });
+      }
+    }
+
+    return data.ok ? { ok: true } : { ok: false, error: data.error ?? "unknown" };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "request_failed",
+    };
   }
 }
