@@ -186,6 +186,16 @@ export async function POST(request: Request) {
     );
   }
 
+  if (!slash.text.trim()) {
+    return slackResponse(
+      [
+        "*Who do you want to thank, and for what?*",
+        "Try: `/thanks @person for helping with the launch`",
+      ].join("\n"),
+      false
+    );
+  }
+
   // Slack gives us 3 seconds; the Slack API and database calls can take longer.
   runAfterResponse(recordThanks(slash, botToken));
 
