@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import {
   ALLOW_SELF_THANKS,
   createSlackThanks,
@@ -8,6 +9,7 @@ import { siteUrl } from "@/lib/supabase/env";
 import {
   fetchSlackUser,
   parseThanksText,
+  postSlackResponse,
   resolveSoleChannelPeer,
   verifySlackRequest,
   type SlackSlashPayload,
@@ -20,6 +22,119 @@ function slackResponse(text: string, inChannel = true) {
     response_type: inChannel ? "in_channel" : "ephemeral",
     text,
   });
+}
+
+/** Outside Vercel there is no request context to extend; just let it run. */
+function runAfterResponse(work: Promise<unknown>) {
+  try {
+    waitUntil(work);
+  } catch {
+    void work;
+  }
+}
+
+/**
+ * Everything that needs network or database access. Runs after the slash
+ * command has already been acknowledged, and reports back via `response_url`.
+ */
+async function recordThanks(slash: SlackSlashPayload, botToken: string) {
+  const { recipientIds: mentioned, reason } = parseThanksText(slash.text);
+  let recipientIds = mentioned;
+
+  if (recipientIds.length === 0) {
+    const peerId = await resolveSoleChannelPeer(
+      slash.channel_id,
+      slash.user_id,
+      botToken
+    );
+    if (peerId) {
+      recipientIds = [peerId];
+    }
+  }
+
+  if (recipientIds.length === 0) {
+    await postSlackResponse(
+      slash.response_url,
+      "Tag who you're thanking: `/thanks @person for <reason>`. (In a private DM I can't see the other person, so the mention is required.)",
+      false
+    );
+    return;
+  }
+
+  if (!reason) {
+    await postSlackResponse(
+      slash.response_url,
+      "Please include a reason. Example: `/thanks @alex for reviewing my PR`",
+      false
+    );
+    return;
+  }
+
+  try {
+    const senderSlack = await fetchSlackUser(slash.user_id, botToken);
+    const sender = await upsertPersonBySlackId({
+      slackUserId: slash.user_id,
+      name: senderSlack?.name ?? slash.user_name ?? slash.user_id,
+      avatarUrl: senderSlack?.avatar_url ?? null,
+      email: senderSlack?.email ?? null,
+    });
+
+    const createdNames: string[] = [];
+    let lastError: string | null = null;
+
+    for (const recipientId of recipientIds) {
+      if (!ALLOW_SELF_THANKS && recipientId === slash.user_id) {
+        continue;
+      }
+
+      const recipientSlack = await fetchSlackUser(recipientId, botToken);
+      const recipient = await upsertPersonBySlackId({
+        slackUserId: recipientId,
+        name: recipientSlack?.name ?? recipientId,
+        avatarUrl: recipientSlack?.avatar_url ?? null,
+        email: recipientSlack?.email ?? null,
+      });
+
+      const result = await createSlackThanks({
+        fromPersonId: sender.id,
+        toPersonId: recipient.id,
+        reason,
+      });
+
+      if (result.ok) {
+        createdNames.push(recipient.name);
+      } else {
+        lastError = result.error;
+      }
+    }
+
+    if (createdNames.length === 0) {
+      await postSlackResponse(
+        slash.response_url,
+        lastError ??
+          "You can't thank yourself — tag a teammate instead.",
+        false
+      );
+      return;
+    }
+
+    const mentionList = createdNames.map((name) => `*${name}*`).join(", ");
+    const board = siteUrl();
+    const link = board ? `\nSee it on the board: ${board}` : "";
+
+    await postSlackResponse(
+      slash.response_url,
+      `:pray: ${sender.name} thanked ${mentionList}: ${reason}${link}`
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Something went wrong.";
+    await postSlackResponse(
+      slash.response_url,
+      `Could not record thanks: ${message}`,
+      false
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -64,94 +179,15 @@ export async function POST(request: Request) {
   }
 
   const botToken = process.env.SLACK_BOT_TOKEN ?? "";
-  if (!botToken && !skipVerify) {
+  if (!botToken) {
     return slackResponse(
       "ThankBot is missing `SLACK_BOT_TOKEN` — ask an admin to finish setup.",
       false
     );
   }
 
-  const parsed = parseThanksText(slash.text);
-  let recipientIds = parsed.recipientIds;
-  const reason = parsed.reason;
+  // Slack gives us 3 seconds; the Slack API and database calls can take longer.
+  runAfterResponse(recordThanks(slash, botToken));
 
-  if (recipientIds.length === 0) {
-    const peerId = await resolveSoleChannelPeer(
-      slash.channel_id,
-      slash.user_id,
-      botToken
-    );
-    if (peerId) {
-      recipientIds = [peerId];
-    }
-  }
-
-  if (recipientIds.length === 0) {
-    return slackResponse(
-      "Usage: `/thanks @person for <reason>` — or run it in a 1:1 DM with just a reason.",
-      false
-    );
-  }
-
-  if (!reason) {
-    return slackResponse(
-      "Please include a reason. Example: `/thanks @alex for reviewing my PR`",
-      false
-    );
-  }
-
-  try {
-    const senderSlack = await fetchSlackUser(slash.user_id, botToken);
-    const sender = await upsertPersonBySlackId({
-      slackUserId: slash.user_id,
-      name: senderSlack?.name ?? slash.user_name ?? slash.user_id,
-      avatarUrl: senderSlack?.avatar_url ?? null,
-      email: senderSlack?.email ?? null,
-    });
-
-    const createdNames: string[] = [];
-
-    for (const recipientId of recipientIds) {
-      if (!ALLOW_SELF_THANKS && recipientId === slash.user_id) {
-        continue;
-      }
-
-      const recipientSlack = await fetchSlackUser(recipientId, botToken);
-      const recipient = await upsertPersonBySlackId({
-        slackUserId: recipientId,
-        name: recipientSlack?.name ?? recipientId,
-        avatarUrl: recipientSlack?.avatar_url ?? null,
-        email: recipientSlack?.email ?? null,
-      });
-
-      const result = await createSlackThanks({
-        fromPersonId: sender.id,
-        toPersonId: recipient.id,
-        reason,
-      });
-
-      if (result.ok) {
-        createdNames.push(recipient.name);
-      }
-    }
-
-    if (createdNames.length === 0) {
-      return slackResponse(
-        "You can't thank yourself — tag someone else (or open a DM with them).",
-        false
-      );
-    }
-
-    const mentionList = createdNames.map((n) => `*${n}*`).join(", ");
-    const board = siteUrl();
-    const link = board ? `\nSee it on the board: ${board}` : "";
-
-    return slackResponse(
-      `:pray: ${sender.name} thanked ${mentionList}: ${reason}${link}`
-    );
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Something went wrong.";
-    return slackResponse(`Could not record thanks: ${message}`, false);
-  }
+  return slackResponse("Recording your thanks…", false);
 }

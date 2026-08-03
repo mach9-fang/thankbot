@@ -43,6 +43,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // Slack routes authenticate with a signing secret, so skip the session
+    // refresh round trip that would eat into Slack's 3 second budget.
+    "/((?!api/slack|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

@@ -145,9 +145,10 @@ export async function fetchSlackUser(
 }
 
 /**
- * When `/thanks` has no @mention, thank the other human in a 1:1 chat
- * (DM or two-person channel). Returns null if the channel has zero or
- * multiple other humans.
+ * When `/thanks` has no @mention, thank the other human in a 1:1 chat.
+ * Slack only lets the bot inspect conversations it belongs to, so this
+ * returns null for DMs between two people that ThankBot isn't part of —
+ * callers should ask for an explicit mention in that case.
  */
 export async function resolveSoleChannelPeer(
   channelId: string | undefined,
@@ -192,11 +193,39 @@ export async function resolveSoleChannelPeer(
     );
     const humans = profiles.filter(
       (profile): profile is SlackUserProfile =>
-        Boolean(profile) && !profile!.is_bot
+        profile !== null && !profile.is_bot
     );
 
     return humans.length === 1 ? humans[0].id : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Slack only waits 3 seconds for a slash command, so the real work replies
+ * later through the command's `response_url`.
+ */
+export async function postSlackResponse(
+  responseUrl: string | undefined,
+  text: string,
+  inChannel = true
+): Promise<void> {
+  if (!responseUrl) {
+    return;
+  }
+
+  try {
+    await fetch(responseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        response_type: inChannel ? "in_channel" : "ephemeral",
+        text,
+      }),
+      cache: "no-store",
+    });
+  } catch {
+    // Slack will have already shown the acknowledgement; nothing to recover.
   }
 }
