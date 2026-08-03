@@ -36,11 +36,17 @@ export function Avatar({
   size = "md",
 }: {
   person: Pick<Person, "id" | "name" | "avatar_url">;
-  size?: "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg";
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   const sizeClass =
-    size === "lg" ? "h-16 w-16 text-xl" : size === "sm" ? "h-8 w-8 text-xs" : "h-10 w-10 text-sm";
+    size === "lg"
+      ? "h-16 w-16 text-xl"
+      : size === "sm"
+        ? "h-8 w-8 text-xs"
+        : size === "xs"
+          ? "h-5 w-5 text-[9px]"
+          : "h-10 w-10 text-sm";
 
   if (person.avatar_url && !imageFailed) {
     return (
