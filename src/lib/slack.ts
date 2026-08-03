@@ -184,10 +184,8 @@ export async function resolveSoleChannelPeer(
       return null;
     }
 
-    if (others.length === 1) {
-      return others[0];
-    }
-
+    // Even a single remaining member gets checked, otherwise a DM with
+    // ThankBot itself would thank the bot.
     const profiles = await Promise.all(
       others.map((id) => fetchSlackUser(id, botToken))
     );

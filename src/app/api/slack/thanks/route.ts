@@ -37,8 +37,12 @@ function runAfterResponse(work: Promise<unknown>) {
  * Everything that needs network or database access. Runs after the slash
  * command has already been acknowledged, and reports back via `response_url`.
  */
-async function recordThanks(slash: SlackSlashPayload, botToken: string) {
-  const { recipientIds: mentioned, reason } = parseThanksText(slash.text);
+async function recordThanks(
+  slash: SlackSlashPayload,
+  botToken: string,
+  parsed: ReturnType<typeof parseThanksText>
+) {
+  const { recipientIds: mentioned, reason } = parsed;
   let recipientIds = mentioned;
 
   if (recipientIds.length === 0) {
@@ -196,8 +200,27 @@ export async function POST(request: Request) {
     );
   }
 
+  // Parsing needs no network, so answer usage mistakes straight away rather
+  // than claiming the thanks is being recorded.
+  const parsed = parseThanksText(slash.text);
+  const inPrivateDm = (slash.channel_id ?? "").startsWith("D");
+
+  if (parsed.recipientIds.length === 0 && inPrivateDm) {
+    return slackResponse(
+      "Tag who you're thanking: `/thanks @person for <reason>`. (In a private DM I can't see who else is here, so the mention is required.)",
+      false
+    );
+  }
+
+  if (parsed.recipientIds.length > 0 && !parsed.reason) {
+    return slackResponse(
+      "Please include a reason. Example: `/thanks @alex for reviewing my PR`",
+      false
+    );
+  }
+
   // Slack gives us 3 seconds; the Slack API and database calls can take longer.
-  runAfterResponse(recordThanks(slash, botToken));
+  runAfterResponse(recordThanks(slash, botToken, parsed));
 
   return slackResponse("Recording your thanks…", false);
 }
