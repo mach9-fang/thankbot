@@ -35,6 +35,18 @@ export async function listThanks(limit = 50): Promise<ThanksWithPeople[]> {
   return (data ?? []) as unknown as ThanksWithPeople[];
 }
 
+export async function getThanks(id: string): Promise<ThanksWithPeople | null> {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("thanks")
+    .select(THANKS_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return (data as ThanksWithPeople | null) ?? null;
+}
+
 export async function listPeople(): Promise<PersonWithStats[]> {
   const supabase = createServerSupabase();
   const { data, error } = await supabase

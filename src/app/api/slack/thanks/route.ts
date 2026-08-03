@@ -97,7 +97,7 @@ async function recordThanks(
       email: senderSlack?.email ?? null,
     });
 
-    const createdNames: string[] = [];
+    const created: Array<{ name: string; url: string }> = [];
     let lastError: string | null = null;
 
     for (const recipientId of recipientIds) {
@@ -120,13 +120,16 @@ async function recordThanks(
       });
 
       if (result.ok) {
-        createdNames.push(recipient.name);
+        created.push({
+          name: recipient.name,
+          url: `${siteUrl()}/thanks/${result.thanks.id}`,
+        });
       } else {
         lastError = result.error;
       }
     }
 
-    if (createdNames.length === 0) {
+    if (created.length === 0) {
       await postSlackResponse(
         slash.response_url,
         lastError ??
@@ -136,14 +139,12 @@ async function recordThanks(
       return;
     }
 
-    const mentionList = createdNames.map((name) => `*${name}*`).join(", ");
-    const board = siteUrl();
-    const link = board ? `\nSee it on the board: ${board}` : "";
-
-    await postSlackResponse(
-      slash.response_url,
-      `:pray: ${sender.name} thanked ${mentionList}: ${reason}${link}`
+    const lines = created.map(
+      ({ name, url }) =>
+        `:pray: ${sender.name} thanked *${name}*: ${reason}\n${url}`
     );
+
+    await postSlackResponse(slash.response_url, lines.join("\n\n"));
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Something went wrong.";

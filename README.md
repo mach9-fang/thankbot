@@ -126,6 +126,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `GET` | `/api/thanks` | Recent thanks (`?limit=50`) |
 | `POST` | `/api/thanks` | Send thanks — requires a session; body `{ to_person_id, reason }` |
 | `POST` | `/api/slack/thanks` | Slack slash command — verified with signing secret |
+| `GET` | `/thanks/[id]` | Public thank card for a single thanks |
 | `GET` | `/api/people` | People with received/given counts |
 | `GET` | `/api/people/[id]` | Person + received/given history |
 

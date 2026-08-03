@@ -17,7 +17,7 @@ export function ThanksForm({
   const router = useRouter();
   const [toPersonId, setToPersonId] = useState("");
   const [reason, setReason] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
+  const [status, setStatus] = useState<"idle" | "sending">("idle");
   const [error, setError] = useState<string | null>(null);
 
   const teammates = useMemo(
@@ -60,18 +60,18 @@ export function ThanksForm({
         body: JSON.stringify({ to_person_id: toPersonId, reason }),
       });
 
-      const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as {
+        error?: string;
+        thanks?: { id: string };
+      };
 
-      if (!response.ok) {
+      if (!response.ok || !payload.thanks?.id) {
         setError(payload.error ?? "Could not send that thanks.");
         setStatus("idle");
         return;
       }
 
-      setReason("");
-      setToPersonId("");
-      setStatus("sent");
-      router.refresh();
+      router.push(`/thanks/${payload.thanks.id}`);
     } catch {
       setError("Network error — try again.");
       setStatus("idle");
@@ -138,9 +138,6 @@ export function ThanksForm({
         >
           {status === "sending" ? "Sending…" : "Send thanks"}
         </button>
-        {status === "sent" ? (
-          <span className="text-sm text-emerald-600">Thanks posted.</span>
-        ) : null}
         {error ? <span className="text-sm text-rose-600">{error}</span> : null}
       </div>
     </form>
