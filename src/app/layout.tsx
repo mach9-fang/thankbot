@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Fraunces, DM_Sans } from "next/font/google";
 import { Header } from "@/components/Header";
 import "./globals.css";
@@ -17,6 +17,10 @@ export const metadata: Metadata = {
   title: "ThankBot — Who thanked you",
   description:
     "An appreciation board where teammates thank each other after signing in with Google.",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#6436f2",
 };
 
 export default function RootLayout({

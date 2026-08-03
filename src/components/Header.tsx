@@ -12,7 +12,7 @@ export async function Header() {
   });
 
   return (
-    <header className="border-b border-rose-100/70 bg-white/70 backdrop-blur">
+    <header className="border-b border-brand-100/80 bg-white/70 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <Link href="/" className="flex items-center gap-2.5">
           <Image
@@ -24,10 +24,10 @@ export async function Header() {
             className="h-9 w-9 rounded-xl shadow-sm"
           />
           <div>
-            <p className="text-base font-semibold tracking-tight text-stone-900">
+            <p className="text-base font-semibold tracking-tight text-ink-900">
               ThankBot
             </p>
-            <p className="text-xs text-stone-500">Celebrate your teammates</p>
+            <p className="text-xs text-ink-500">Celebrate your teammates</p>
           </div>
         </Link>
 
@@ -38,14 +38,14 @@ export async function Header() {
               className="flex items-center gap-2.5 rounded-xl px-2 py-1.5 transition hover:bg-white"
             >
               <Avatar person={currentPerson} size="sm" />
-              <span className="hidden text-sm font-medium text-stone-800 sm:block">
+              <span className="hidden text-sm font-medium text-ink-800 sm:block">
                 {currentPerson.name}
               </span>
             </Link>
             <form action="/auth/signout" method="post">
               <button
                 type="submit"
-                className="rounded-xl border border-stone-200 px-3 py-1.5 text-sm text-stone-600 transition hover:bg-white hover:text-stone-900"
+                className="rounded-xl border border-ink-200 px-3 py-1.5 text-sm text-ink-600 transition hover:border-brand-200 hover:bg-white hover:text-ink-900"
               >
                 Sign out
               </button>
@@ -54,7 +54,7 @@ export async function Header() {
         ) : (
           <a
             href="/auth/signin"
-            className="rounded-xl bg-stone-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-stone-700"
+            className="rounded-xl bg-brand-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm shadow-brand-600/20 transition hover:bg-brand-700"
           >
             Sign in with Google
           </a>

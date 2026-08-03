@@ -4,13 +4,13 @@ import { useState } from "react";
 import type { Person } from "@/lib/types";
 
 const COLORS = [
-  "bg-rose-500",
-  "bg-amber-500",
-  "bg-emerald-500",
-  "bg-sky-500",
-  "bg-violet-500",
+  "bg-brand-600",
+  "bg-heart-500",
+  "bg-aqua-600",
+  "bg-indigo-500",
   "bg-fuchsia-500",
-  "bg-orange-500",
+  "bg-sky-500",
+  "bg-brand-400",
   "bg-teal-500",
 ];
 

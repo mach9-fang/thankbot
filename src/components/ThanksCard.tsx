@@ -18,29 +18,29 @@ export function ThanksCard({ thanks }: { thanks: ThanksWithPeople }) {
   return (
     <Link
       href={`/thanks/${thanks.id}`}
-      className="group block rounded-2xl border border-rose-100/80 bg-white/80 p-5 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:border-rose-200 hover:shadow-md"
+      className="group block rounded-2xl border border-brand-100/80 bg-white/80 p-5 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md hover:shadow-brand-600/10"
     >
       <article className="flex items-start gap-4">
         <Avatar person={thanks.to_person} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm text-stone-500">
-            <span className="font-medium text-stone-800 group-hover:text-rose-600">
+          <p className="text-sm text-ink-500">
+            <span className="font-medium text-ink-800 group-hover:text-brand-700">
               {thanks.from_person.name}
             </span>{" "}
             thanked{" "}
-            <span className="font-medium text-stone-800 group-hover:text-rose-600">
+            <span className="font-medium text-ink-800 group-hover:text-brand-700">
               {thanks.to_person.name}
             </span>
           </p>
-          <p className="mt-2 text-lg leading-relaxed text-stone-900">
+          <p className="mt-2 text-lg leading-relaxed text-ink-900">
             “{reason}”
           </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-stone-400">
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-400">
             <time dateTime={thanks.created_at}>
               {formatThanksWhen(thanks.created_at)}
             </time>
             <span aria-hidden>·</span>
-            <span className="rounded-full bg-stone-100 px-2 py-0.5 capitalize text-stone-500">
+            <span className="rounded-full bg-brand-50 px-2 py-0.5 capitalize text-brand-700">
               {thanks.source}
             </span>
           </div>

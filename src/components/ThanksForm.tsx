@@ -30,16 +30,16 @@ export function ThanksForm({
 
   if (!currentPerson) {
     return (
-      <div className="rounded-2xl border border-rose-100 bg-white/80 p-6 shadow-sm">
-        <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-stone-900">
+      <div className="rounded-2xl border border-brand-100 bg-white/80 p-6 shadow-sm">
+        <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-ink-900">
           Say thanks
         </h2>
-        <p className="mt-2 text-sm text-stone-600">
+        <p className="mt-2 text-sm text-ink-600">
           Sign in with your work Google account to thank a teammate.
         </p>
         <a
           href="/auth/signin"
-          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-stone-700"
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-ink-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-ink-800"
         >
           <GoogleMark />
           Sign in with Google
@@ -81,23 +81,23 @@ export function ThanksForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-2xl border border-rose-100 bg-white/80 p-6 shadow-sm"
+      className="rounded-2xl border border-brand-100 bg-white/80 p-6 shadow-sm"
     >
-      <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-stone-900">
+      <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-ink-900">
         Say thanks
       </h2>
-      <p className="mt-1 text-sm text-stone-500">
+      <p className="mt-1 text-sm text-ink-500">
         Posting as {currentPerson.name}
       </p>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,220px)_1fr]">
         <label className="block">
-          <span className="text-sm font-medium text-stone-700">Teammate</span>
+          <span className="text-sm font-medium text-ink-700">Teammate</span>
           <select
             value={toPersonId}
             onChange={(event) => setToPersonId(event.target.value)}
             required
-            className="mt-1.5 w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-stone-900 outline-none transition focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
+            className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
           >
             <option value="">Choose someone…</option>
             {teammates.map((person) => (
@@ -111,20 +111,20 @@ export function ThanksForm({
         </label>
 
         <label className="block">
-          <span className="text-sm font-medium text-stone-700">For what?</span>
+          <span className="text-sm font-medium text-ink-700">For what?</span>
           <input
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             maxLength={MAX_REASON_LENGTH}
             required
             placeholder="reviewing my PR at midnight"
-            className="mt-1.5 w-full rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm text-stone-900 outline-none transition placeholder:text-stone-400 focus:border-rose-300 focus:ring-2 focus:ring-rose-100"
+            className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 outline-none transition placeholder:text-ink-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
           />
         </label>
       </div>
 
       {teammates.length === 0 ? (
-        <p className="mt-4 text-sm text-stone-500">
+        <p className="mt-4 text-sm text-ink-500">
           No teammates on the board yet — once a colleague signs in, they show up
           here.
         </p>
@@ -134,11 +134,11 @@ export function ThanksForm({
         <button
           type="submit"
           disabled={status === "sending" || teammates.length === 0}
-          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-rose-500 to-orange-400 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-brand-600 to-brand-400 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-600/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {status === "sending" ? "Sending…" : "Send thanks"}
         </button>
-        {error ? <span className="text-sm text-rose-600">{error}</span> : null}
+        {error ? <span className="text-sm text-heart-600">{error}</span> : null}
       </div>
     </form>
   );

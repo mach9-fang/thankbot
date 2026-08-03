@@ -22,39 +22,39 @@ export default async function PersonPage({
     <div className="space-y-8">
       <Link
         href="/"
-        className="inline-flex items-center gap-1 text-sm text-stone-500 transition hover:text-rose-600"
+        className="inline-flex items-center gap-1 text-sm text-ink-500 transition hover:text-brand-700"
       >
         ← Back to board
       </Link>
 
-      <section className="flex flex-col items-start gap-5 rounded-3xl border border-rose-100 bg-white/80 p-6 shadow-sm sm:flex-row sm:items-center sm:p-8">
+      <section className="flex flex-col items-start gap-5 rounded-3xl border border-brand-100 bg-white/80 p-6 shadow-sm sm:flex-row sm:items-center sm:p-8">
         <Avatar person={person} size="lg" />
         <div className="min-w-0 flex-1">
-          <h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-stone-900">
+          <h1 className="font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-ink-900">
             {person.name}
           </h1>
           {person.email ? (
-            <p className="mt-1 truncate text-sm text-stone-500">{person.email}</p>
+            <p className="mt-1 truncate text-sm text-ink-500">{person.email}</p>
           ) : null}
           <div className="mt-4 flex flex-wrap gap-3">
-            <div className="rounded-xl bg-rose-50 px-3 py-2">
-              <p className="text-lg font-semibold text-rose-700">
+            <div className="rounded-xl bg-heart-50 px-3 py-2">
+              <p className="text-lg font-semibold text-heart-700">
                 {received.length}
               </p>
-              <p className="text-xs text-rose-500">thanks received</p>
+              <p className="text-xs text-heart-600">thanks received</p>
             </div>
-            <div className="rounded-xl bg-stone-100 px-3 py-2">
-              <p className="text-lg font-semibold text-stone-700">
+            <div className="rounded-xl bg-brand-50 px-3 py-2">
+              <p className="text-lg font-semibold text-brand-700">
                 {given.length}
               </p>
-              <p className="text-xs text-stone-500">thanks given</p>
+              <p className="text-xs text-brand-600">thanks given</p>
             </div>
           </div>
         </div>
       </section>
 
       <section className="space-y-4">
-        <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-stone-900">
+        <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-ink-900">
           Thanks received
         </h2>
         {received.length === 0 ? (
@@ -69,7 +69,7 @@ export default async function PersonPage({
       </section>
 
       <section className="space-y-4">
-        <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-stone-900">
+        <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-ink-900">
           Thanks given
         </h2>
         {given.length === 0 ? (
@@ -88,7 +88,7 @@ export default async function PersonPage({
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-stone-200 bg-white/60 p-8 text-center text-stone-500">
+    <div className="rounded-2xl border border-dashed border-ink-200 bg-white/60 p-8 text-center text-ink-500">
       {message}
     </div>
   );
