@@ -12,8 +12,18 @@ export function formatThanksWhen(iso: string) {
   }).format(date);
 }
 
+export function formatRecipientNames(names: string[]) {
+  return new Intl.ListFormat("en", {
+    style: "long",
+    type: "conjunction",
+  }).format(names);
+}
+
 export function ThanksCard({ thanks }: { thanks: ThanksWithPeople }) {
   const reason = emojifyText(thanks.reason);
+  const recipientNames = formatRecipientNames(
+    thanks.to_people.map((person) => person.name)
+  );
 
   return (
     <Link
@@ -21,7 +31,11 @@ export function ThanksCard({ thanks }: { thanks: ThanksWithPeople }) {
       className="group block rounded-2xl border border-brand-100/80 bg-white/80 p-5 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md hover:shadow-brand-600/10"
     >
       <article className="flex items-start gap-4">
-        <Avatar person={thanks.to_person} />
+        <div className="flex shrink-0 -space-x-3">
+          {thanks.to_people.slice(0, 3).map((person) => (
+            <Avatar key={person.id} person={person} />
+          ))}
+        </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm text-ink-500">
             <span className="font-medium text-ink-800 group-hover:text-brand-700">
@@ -29,7 +43,7 @@ export function ThanksCard({ thanks }: { thanks: ThanksWithPeople }) {
             </span>{" "}
             thanked{" "}
             <span className="font-medium text-ink-800 group-hover:text-brand-700">
-              {thanks.to_person.name}
+              {recipientNames}
             </span>
           </p>
           <p className="mt-2 text-lg leading-relaxed text-ink-900">

@@ -3,20 +3,36 @@ import { createServerSupabase } from "./supabase/server";
 import { emojifyText } from "./emoji";
 import type {
   Person,
+  PersonSummary,
   PersonWithStats,
+  Thanks,
   ThanksWithPeople,
 } from "./types";
 
 const THANKS_SELECT = `
   id,
   from_person_id,
-  to_person_id,
   reason,
   source,
   created_at,
   from_person:people!thanks_from_person_id_fkey (id, name, avatar_url),
-  to_person:people!thanks_to_person_id_fkey (id, name, avatar_url)
+  recipients:thank_recipients (
+    person:people!thank_recipients_person_id_fkey (id, name, avatar_url)
+  )
 `;
+
+type ThanksQueryRow = Thanks & {
+  from_person: PersonSummary;
+  recipients: Array<{ person: PersonSummary }>;
+};
+
+function mapThanks(row: ThanksQueryRow): ThanksWithPeople {
+  const { recipients, ...thanks } = row;
+  return {
+    ...thanks,
+    to_people: recipients.map(({ person }) => person),
+  };
+}
 
 export const MAX_REASON_LENGTH = 500;
 
@@ -33,7 +49,7 @@ export async function listThanks(limit = 50): Promise<ThanksWithPeople[]> {
     .limit(limit);
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as ThanksWithPeople[];
+  return ((data ?? []) as unknown as ThanksQueryRow[]).map(mapThanks);
 }
 
 export async function getThanks(id: string): Promise<ThanksWithPeople | null> {
@@ -45,7 +61,7 @@ export async function getThanks(id: string): Promise<ThanksWithPeople | null> {
     .maybeSingle();
 
   if (error) throw new Error(error.message);
-  return (data as ThanksWithPeople | null) ?? null;
+  return data ? mapThanks(data as unknown as ThanksQueryRow) : null;
 }
 
 export async function listPeople(): Promise<PersonWithStats[]> {
@@ -78,12 +94,11 @@ export async function listThanksForPerson(personId: string): Promise<{
 }> {
   const supabase = createServerSupabase();
 
-  const [received, given] = await Promise.all([
+  const [recipientRows, given] = await Promise.all([
     supabase
-      .from("thanks")
-      .select(THANKS_SELECT)
-      .eq("to_person_id", personId)
-      .order("created_at", { ascending: false }),
+      .from("thank_recipients")
+      .select("thanks_id")
+      .eq("person_id", personId),
     supabase
       .from("thanks")
       .select(THANKS_SELECT)
@@ -91,12 +106,24 @@ export async function listThanksForPerson(personId: string): Promise<{
       .order("created_at", { ascending: false }),
   ]);
 
-  if (received.error) throw new Error(received.error.message);
+  if (recipientRows.error) throw new Error(recipientRows.error.message);
   if (given.error) throw new Error(given.error.message);
 
+  const receivedIds = (recipientRows.data ?? []).map((row) => row.thanks_id);
+  const received =
+    receivedIds.length === 0
+      ? { data: [], error: null }
+      : await supabase
+          .from("thanks")
+          .select(THANKS_SELECT)
+          .in("id", receivedIds)
+          .order("created_at", { ascending: false });
+
+  if (received.error) throw new Error(received.error.message);
+
   return {
-    received: (received.data ?? []) as unknown as ThanksWithPeople[],
-    given: (given.data ?? []) as unknown as ThanksWithPeople[],
+    received: ((received.data ?? []) as unknown as ThanksQueryRow[]).map(mapThanks),
+    given: ((given.data ?? []) as unknown as ThanksQueryRow[]).map(mapThanks),
   };
 }
 
@@ -183,7 +210,7 @@ export type CreateThanksResult =
   | { ok: false; status: number; error: string };
 
 export async function createThanks(input: {
-  toPersonId: string;
+  toPersonIds: string[];
   reason: string;
 }): Promise<CreateThanksResult> {
   const sender = await getCurrentPerson();
@@ -202,30 +229,32 @@ export async function createThanks(input: {
       error: `Keep it under ${MAX_REASON_LENGTH} characters.`,
     };
   }
-  if (!input.toPersonId) {
+  const toPersonIds = [...new Set(input.toPersonIds.filter(Boolean))];
+  if (toPersonIds.length === 0) {
     return { ok: false, status: 400, error: "Pick who you want to thank." };
   }
-  if (!ALLOW_SELF_THANKS && input.toPersonId === sender.id) {
+  if (!ALLOW_SELF_THANKS && toPersonIds.includes(sender.id)) {
     return { ok: false, status: 400, error: "Pick a teammate other than yourself." };
   }
 
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
-    .from("thanks")
-    .insert({
-      from_person_id: sender.id,
-      to_person_id: input.toPersonId,
-      reason,
-      source: "web",
-    })
-    .select(THANKS_SELECT)
-    .single();
+  const { data: thanksId, error } = await supabase.rpc("create_thanks_card", {
+    p_from_person_id: sender.id,
+    p_to_person_ids: toPersonIds,
+    p_reason: reason,
+    p_source: "web",
+  });
 
   if (error) {
     return { ok: false, status: 400, error: error.message };
   }
 
-  return { ok: true, thanks: data as unknown as ThanksWithPeople };
+  const thanks = await getThanks(thanksId as string);
+  if (!thanks) {
+    return { ok: false, status: 500, error: "Could not load the new thanks." };
+  }
+
+  return { ok: true, thanks };
 }
 
 /**
@@ -309,7 +338,7 @@ export async function upsertPersonBySlackId(input: {
 /** Insert a thanks row from a verified Slack slash command. */
 export async function createSlackThanks(input: {
   fromPersonId: string;
-  toPersonId: string;
+  toPersonIds: string[];
   reason: string;
 }): Promise<CreateThanksResult> {
   const reason = emojifyText(input.reason.trim());
@@ -323,10 +352,11 @@ export async function createSlackThanks(input: {
       error: `Keep it under ${MAX_REASON_LENGTH} characters.`,
     };
   }
-  if (!input.toPersonId) {
+  const toPersonIds = [...new Set(input.toPersonIds.filter(Boolean))];
+  if (toPersonIds.length === 0) {
     return { ok: false, status: 400, error: "Pick who you want to thank." };
   }
-  if (!ALLOW_SELF_THANKS && input.toPersonId === input.fromPersonId) {
+  if (!ALLOW_SELF_THANKS && toPersonIds.includes(input.fromPersonId)) {
     return {
       ok: false,
       status: 400,
@@ -335,20 +365,29 @@ export async function createSlackThanks(input: {
   }
 
   const supabase = createServiceSupabase();
-  const { data, error } = await supabase
-    .from("thanks")
-    .insert({
-      from_person_id: input.fromPersonId,
-      to_person_id: input.toPersonId,
-      reason,
-      source: "slack",
-    })
-    .select(THANKS_SELECT)
-    .single();
+  const { data: thanksId, error } = await supabase.rpc("create_thanks_card", {
+    p_from_person_id: input.fromPersonId,
+    p_to_person_ids: toPersonIds,
+    p_reason: reason,
+    p_source: "slack",
+  });
 
   if (error) {
     return { ok: false, status: 400, error: error.message };
   }
 
-  return { ok: true, thanks: data as unknown as ThanksWithPeople };
+  const { data, error: selectError } = await supabase
+    .from("thanks")
+    .select(THANKS_SELECT)
+    .eq("id", thanksId as string)
+    .single();
+
+  if (selectError) {
+    return { ok: false, status: 500, error: selectError.message };
+  }
+
+  return {
+    ok: true,
+    thanks: mapThanks(data as unknown as ThanksQueryRow),
+  };
 }
