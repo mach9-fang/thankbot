@@ -8,6 +8,7 @@ import {
 import { siteUrl } from "@/lib/supabase/env";
 import {
   fetchSlackUser,
+  formatMissingRecipientHint,
   formatSkippedRecipients,
   listChannelHumanMembers,
   listChannelMemberIds,
@@ -19,6 +20,7 @@ import {
   type ParsedThanksText,
   type SkippedRecipient,
   type SlackSlashPayload,
+  type SolePeerMiss,
 } from "@/lib/slack";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +57,7 @@ async function recordThanks(
   const { recipientIds: mentioned, handles, reason, channelWide } = parsed;
   const skipped: SkippedRecipient[] = [];
   let recipientIds: string[] = [];
+  let solePeerMiss: SolePeerMiss | null = null;
 
   if (channelWide) {
     const humans = await listChannelHumanMembers(
@@ -129,13 +132,19 @@ async function recordThanks(
       recipientIds.push(candidate.id);
     }
   } else {
-    const peerId = await resolveSoleChannelPeer(
+    const peer = await resolveSoleChannelPeer(
       slash.channel_id,
       slash.user_id,
-      botToken
+      botToken,
+      {
+        allowSelf: ALLOW_SELF_THANKS,
+        userToken: process.env.SLACK_USER_TOKEN,
+      }
     );
-    if (peerId) {
-      recipientIds = [peerId];
+    if (peer.peerId) {
+      recipientIds = [peer.peerId];
+    } else {
+      solePeerMiss = peer.miss;
     }
   }
 
@@ -143,7 +152,9 @@ async function recordThanks(
     const skipNote = formatSkippedRecipients(skipped);
     const hint = channelWide
       ? "I couldn't thank anyone in this conversation."
-      : "Tag who you're thanking: `/thanks @person for <reason>`. In a 1:1 DM with ThankBot you can omit the mention.";
+      : formatMissingRecipientHint(solePeerMiss, {
+          userTokenConfigured: Boolean(process.env.SLACK_USER_TOKEN),
+        });
 
     await postSlackResponse(
       slash.response_url,
@@ -231,7 +242,7 @@ async function recordThanks(
     const receivedNames = created.map(({ name }) => `*${name}*`).join(", ");
     const header = `:pray: ${sender.name} thanked ${receivedNames}: ${reason}`;
     const detailLines = created.map(
-      ({ name, url }) => `• *${name}* — ${url}`
+      ({ name, url }) => `• *${name}* — <${url}|↗>`
     );
 
     const body = [header, ...detailLines].join("\n");
@@ -308,7 +319,7 @@ export async function POST(request: Request) {
         "Try: `/thanks @person for helping with the launch`",
         "Or thank several people: `/thanks @alice @bob for shipping it`",
         "In a channel: `/thanks everyone for the hard work`",
-        "In a 1:1 DM with ThankBot: `/thanks for covering standup`",
+        "Where ThankBot sees just one teammate: `/thanks for covering standup`",
       ].join("\n"),
       false
     );

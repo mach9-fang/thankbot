@@ -6,7 +6,7 @@ teammate, and everyone sees it on the feed.
 - **Next.js 14** (App Router) — deployed on Vercel
 - **Supabase** — Postgres for the record of who thanked whom, plus Google auth
 - **Slack** — `/thanks @person for …`, multiple `@mentions`, `everyone` in a
-  channel, or just a reason in a 1:1 DM
+  channel, or just a reason where one teammate is obvious
 
 ## How it works
 
@@ -17,8 +17,10 @@ teammate, and everyone sees it on the feed.
 3. From Slack, `/thanks @alice @bob for …` hits `POST /api/slack/thanks`, which
    upserts people by `slack_user_id` and writes one thanks per recipient with
    `source=slack`. You can thank a whole channel with `/thanks everyone for …`,
-   and in a 1:1 DM with ThankBot you can omit the mention. Mentions that aren't
-   in the conversation (or don't exist) are skipped and reported back.
+   and omit the mention wherever ThankBot can see exactly one other person —
+   including a 1:1 DM with a teammate once `SLACK_USER_TOKEN` is set (see below).
+   Mentions that aren't in the conversation (or don't exist) are skipped and
+   reported back.
 4. On the web, the form's typeahead lets you pick multiple teammates before
    sending. The feed, leaderboard, and `/people/[id]` pages read from Postgres.
 
@@ -67,10 +69,16 @@ Workspace org (external users then can't complete sign-in).
    - `commands`
    - `users:read`
    - `users:read.email` (links Slack people to Google logins by email)
-   - `im:read`, `channels:read`, and `groups:read` (1:1 DM peer + channel roster)
-3. Install the app to your workspace and copy the **Bot User OAuth Token**.
-4. Under **Basic Information**, copy the **Signing Secret**.
-5. Under **Slash Commands**, create `/thanks` pointing at:
+   - `channels:read`, `groups:read`, `im:read`, and `mpim:read` (conversation
+     rosters, so a lone teammate can be thanked without a mention)
+3. To omit the mention in a **1:1 DM with a teammate**, also add the *user*
+   scope `im:read` under **User Token Scopes**. Slack never lets a bot token see
+   a DM it isn't in, so ThankBot reads that roster with the token of the person
+   who granted it, and only for that person's own commands.
+4. Install the app to your workspace and copy the **Bot User OAuth Token** (and
+   the **User OAuth Token** if you added the user scope).
+5. Under **Basic Information**, copy the **Signing Secret**.
+6. Under **Slash Commands**, create `/thanks` pointing at:
 
 ```
 https://thankbot.previewmach9.com/api/slack/thanks
@@ -85,8 +93,13 @@ Usage in Slack:
 /thanks @alex for reviewing my PR
 /thanks @alice @bob for shipping the release
 /thanks everyone for covering on-call   # also: all, everybody, every body
-/thanks for covering standup            # in a 1:1 DM with ThankBot
+/thanks for covering standup            # where ThankBot sees one other person
 ```
+
+The last form needs a single obvious recipient. It works in a 1:1 DM with a
+teammate (with `SLACK_USER_TOKEN`), and in any channel or group DM where
+ThankBot is a member and exactly one other person is present. A 1:1 DM with
+ThankBot itself has nobody to thank, so it asks for a mention.
 
 ### 4. Environment variables
 
@@ -102,6 +115,7 @@ cp .env.example .env.local
 | `SUPABASE_SERVICE_ROLE_KEY` | For `pnpm seed` and Slack writes; keep it out of the browser |
 | `SLACK_SIGNING_SECRET` | Slack app → Basic Information → Signing Secret |
 | `SLACK_BOT_TOKEN` | Slack app → OAuth & Permissions → Bot User OAuth Token |
+| `SLACK_USER_TOKEN` | Optional — User OAuth Token (`im:read` user scope) so its owner can skip the mention in their own 1:1 DMs |
 | `SLACK_SKIP_VERIFY` | Local only — skips request signature checks |
 | `NEXT_PUBLIC_ALLOW_SELF_THANKS` | Debug only — set `true` to thank yourself while testing alone |
 
@@ -121,6 +135,7 @@ Open [http://localhost:3000](http://localhost:3000).
 2. Add `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
    `SLACK_SIGNING_SECRET`, and `SLACK_BOT_TOKEN` as environment variables.
+   Add `SLACK_USER_TOKEN` too if `/thanks <reason>` should work in 1:1 DMs.
 3. Point the domain `thankbot-jol7svuvz.previewmach9.com` at the deployment and
    make sure the same URL is in Supabase's redirect list and the Slack slash
    command Request URL.
@@ -146,3 +161,5 @@ Open [http://localhost:3000](http://localhost:3000).
 | `pnpm seed` | Load demo people + thanks (needs service role key) |
 | `pnpm lint` | ESLint |
 | `pnpm tsx scripts/test-parse.ts` | Slack `/thanks` text parser assertions |
+| `pnpm tsx scripts/test-slack-recipients.ts` | Recipient resolution for `/thanks` without a mention |
+| `pnpm tsx scripts/test-slack-dm-flow.ts` | Slack DM flow end to end (needs local Supabase + `.env.local`) |

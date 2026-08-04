@@ -247,6 +247,45 @@ export async function listChannelMemberIds(
   }
 }
 
+/** The Slack user a token was granted by, via `auth.test`. */
+export async function fetchTokenOwner(
+  token: string
+): Promise<string | null> {
+  if (!token) {
+    return null;
+  }
+
+  try {
+    const res = await fetch("https://slack.com/api/auth.test", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      cache: "no-store",
+    });
+
+    const data = (await res.json()) as { ok: boolean; user_id?: string };
+    return data.ok ? (data.user_id ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function humanProfilesFor(
+  memberIds: Iterable<string>,
+  botToken: string
+): Promise<SlackUserProfile[]> {
+  const profiles = await Promise.all(
+    Array.from(memberIds).map((id) => fetchSlackUser(id, botToken))
+  );
+
+  return profiles.filter(
+    (profile): profile is SlackUserProfile =>
+      profile !== null && !profile.is_bot
+  );
+}
+
 /**
  * Human (non-bot) members of a channel, optionally excluding the sender.
  */
@@ -265,29 +304,92 @@ export async function listChannelHumanMembers(
     (id) => options?.includeSender || id !== senderId
   );
 
-  const profiles = await Promise.all(
-    candidateIds.map((id) => fetchSlackUser(id, botToken))
-  );
-
-  return profiles.filter(
-    (profile): profile is SlackUserProfile =>
-      profile !== null && !profile.is_bot
-  );
+  return humanProfilesFor(candidateIds, botToken);
 }
+
+/** Why `/thanks <reason>` could not pick a recipient on its own. */
+export type SolePeerMiss =
+  /** Slack hides the roster of conversations ThankBot isn't a member of. */
+  | "conversation_hidden"
+  /** ThankBot is the only company here, as in its own 1:1 DM. */
+  | "no_other_human"
+  /** Several people could be meant, so ThankBot shouldn't guess. */
+  | "several_humans";
+
+export type SolePeerResolution =
+  | { peerId: string; miss: null }
+  | { peerId: null; miss: SolePeerMiss };
 
 /**
  * When `/thanks` has no @mention, thank the other human in a 1:1 chat.
- * Slack only lets the bot inspect conversations it belongs to, so this
- * returns null for DMs between two people that ThankBot isn't part of —
- * callers should ask for an explicit mention in that case.
+ *
+ * A bot token may only inspect conversations the bot belongs to, which leaves
+ * out every DM between two people. `userToken` (Slack's `im:read` user scope)
+ * covers those, but only for the person who granted it, so it is used solely
+ * for that person's own commands. A 1:1 DM with ThankBot itself still has no
+ * one to thank (`no_other_human`), and the returned `miss` lets callers say
+ * which case they hit instead of repeating one generic hint.
  */
 export async function resolveSoleChannelPeer(
   channelId: string | undefined,
   senderId: string,
-  botToken: string
-): Promise<string | null> {
-  const humans = await listChannelHumanMembers(channelId, senderId, botToken);
-  return humans.length === 1 ? humans[0].id : null;
+  botToken: string,
+  options?: { allowSelf?: boolean; userToken?: string }
+): Promise<SolePeerResolution> {
+  let memberIds = await listChannelMemberIds(channelId, botToken);
+
+  if (!memberIds && options?.userToken) {
+    const owner = await fetchTokenOwner(options.userToken);
+    if (owner === senderId) {
+      memberIds = await listChannelMemberIds(channelId, options.userToken);
+    }
+  }
+
+  if (!memberIds) {
+    return { peerId: null, miss: "conversation_hidden" };
+  }
+
+  const humans = await humanProfilesFor(memberIds, botToken);
+  const others = humans.filter((person) => person.id !== senderId);
+
+  if (others.length === 1) {
+    return { peerId: others[0].id, miss: null };
+  }
+  if (others.length > 1) {
+    return { peerId: null, miss: "several_humans" };
+  }
+
+  // Alone with ThankBot: only useful while a single person tries the flow out.
+  if (options?.allowSelf && humans.some((person) => person.id === senderId)) {
+    return { peerId: senderId, miss: null };
+  }
+
+  return { peerId: null, miss: "no_other_human" };
+}
+
+const TAG_SOMEONE = "tag who you're thanking: `/thanks @person for <reason>`";
+
+/**
+ * Explain what to do when `/thanks` couldn't work out the recipient. Reading a
+ * 1:1 DM takes the optional `SLACK_USER_TOKEN`, so say when that setup step is
+ * what's standing in the way rather than leaving it looking like a bug.
+ */
+export function formatMissingRecipientHint(
+  miss: SolePeerMiss | null,
+  options?: { userTokenConfigured?: boolean }
+): string {
+  switch (miss) {
+    case "conversation_hidden":
+      return options?.userTokenConfigured === false
+        ? `Slack only lets ThankBot read a 1:1 DM once \`SLACK_USER_TOKEN\` is set up — ask an admin. Until then, ${TAG_SOMEONE}.`
+        : `Slack won't tell ThankBot who else is in this conversation, so ${TAG_SOMEONE}.`;
+    case "no_other_human":
+      return `It's just the two of us in this DM, so ${TAG_SOMEONE}.`;
+    case "several_humans":
+      return `There's more than one person here, so ${TAG_SOMEONE} — or thank everybody with \`/thanks everyone for <reason>\`.`;
+    default:
+      return `Tag who you're thanking: \`/thanks @person for <reason>\`. In a conversation ThankBot shares with one teammate you can omit the mention.`;
+  }
 }
 
 function normalizeHandle(value: string): string {
