@@ -1,21 +1,34 @@
 -- A thanks is one card that can recognize one or more people.
-create table public.thank_recipients (
+-- Safe to re-run, since hosted projects apply this by hand.
+create table if not exists public.thank_recipients (
   thanks_id uuid not null references public.thanks (id) on delete cascade,
   person_id uuid not null references public.people (id) on delete cascade,
   primary key (thanks_id, person_id)
 );
 
-create index thank_recipients_person_idx
+create index if not exists thank_recipients_person_idx
   on public.thank_recipients (person_id);
 
--- Preserve every existing one-recipient card.
-insert into public.thank_recipients (thanks_id, person_id)
-select id, to_person_id
-from public.thanks;
+-- Carry over every card written while a thanks held a single recipient.
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'thanks'
+      and column_name = 'to_person_id'
+  ) then
+    insert into public.thank_recipients (thanks_id, person_id)
+    select id, to_person_id
+    from public.thanks
+    on conflict do nothing;
+  end if;
+end $$;
 
-drop view public.people_with_stats;
-drop index public.thanks_to_person_idx;
-alter table public.thanks drop column to_person_id;
+drop view if exists public.people_with_stats;
+drop index if exists public.thanks_to_person_idx;
+alter table public.thanks drop column if exists to_person_id;
 
 create view public.people_with_stats
 with (security_invoker = true) as
@@ -35,10 +48,12 @@ from public.people p;
 
 alter table public.thank_recipients enable row level security;
 
+drop policy if exists "thank recipients are readable" on public.thank_recipients;
 create policy "thank recipients are readable"
   on public.thank_recipients for select
   using (true);
 
+drop policy if exists "signed-in users add recipients to their thanks" on public.thank_recipients;
 create policy "signed-in users add recipients to their thanks"
   on public.thank_recipients for insert
   to authenticated
@@ -54,7 +69,7 @@ create policy "signed-in users add recipients to their thanks"
 
 -- Both inserts run in the RPC's transaction, so a card can never be left with
 -- only some of its intended recipients.
-create function public.create_thanks_card(
+create or replace function public.create_thanks_card(
   p_from_person_id uuid,
   p_to_person_ids uuid[],
   p_reason text,
