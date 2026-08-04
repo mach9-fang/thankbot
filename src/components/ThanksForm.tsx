@@ -116,7 +116,12 @@ export function ThanksForm({
       </p>
 
       <label className="mt-4 block">
-        <span className="text-sm font-medium text-ink-700">Teammates</span>
+        <span className="text-sm font-medium text-ink-700">
+          Teammates
+        </span>
+        <p className="mt-0.5 text-xs text-ink-500">
+          Type to search, then add as many people as you like.
+        </p>
         <div className="mt-1.5">
           <PersonTypeahead
             people={teammates}

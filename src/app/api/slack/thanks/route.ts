@@ -8,11 +8,16 @@ import {
 import { siteUrl } from "@/lib/supabase/env";
 import {
   fetchSlackUser,
+  formatSkippedRecipients,
+  listChannelHumanMembers,
+  listChannelMemberIds,
   parseThanksText,
   postSlackResponse,
   resolveHandlesToUserIds,
   resolveSoleChannelPeer,
   verifySlackRequest,
+  type ParsedThanksText,
+  type SkippedRecipient,
   type SlackSlashPayload,
 } from "@/lib/slack";
 
@@ -34,6 +39,10 @@ function runAfterResponse(work: Promise<unknown>) {
   }
 }
 
+function mentionLabel(id: string, name?: string | null) {
+  return name ? `*${name}*` : `<@${id}>`;
+}
+
 /**
  * Everything that needs network or database access. Runs after the slash
  * command has already been acknowledged, and reports back via `response_url`.
@@ -41,25 +50,85 @@ function runAfterResponse(work: Promise<unknown>) {
 async function recordThanks(
   slash: SlackSlashPayload,
   botToken: string,
-  parsed: ReturnType<typeof parseThanksText>
+  parsed: ParsedThanksText
 ) {
-  const { recipientIds: mentioned, handles, reason } = parsed;
-  let recipientIds = mentioned;
+  const { recipientIds: mentioned, handles, reason, channelWide } = parsed;
+  const skipped: SkippedRecipient[] = [];
+  let recipientIds: string[] = [];
 
-  if (recipientIds.length === 0 && handles.length > 0) {
-    recipientIds = await resolveHandlesToUserIds(handles, botToken);
+  if (channelWide) {
+    const humans = await listChannelHumanMembers(
+      slash.channel_id,
+      slash.user_id,
+      botToken,
+      { includeSender: ALLOW_SELF_THANKS }
+    );
 
-    if (recipientIds.length === 0) {
+    if (humans.length === 0) {
       await postSlackResponse(
         slash.response_url,
-        `I couldn't find ${handles.map((h) => `\`@${h}\``).join(", ")} in this workspace. Pick the name from Slack's autocomplete so it becomes a real mention.`,
+        "I couldn't see anyone else in this conversation. Invite ThankBot to the channel, or tag people with `@mention`.",
         false
       );
       return;
     }
-  }
 
-  if (recipientIds.length === 0) {
+    recipientIds = humans.map((person) => person.id);
+  } else if (mentioned.length > 0 || handles.length > 0) {
+    const channelMembers = await listChannelMemberIds(
+      slash.channel_id,
+      botToken
+    );
+
+    const candidateIds: Array<{ id: string; label: string }> = [];
+
+    for (const id of mentioned) {
+      candidateIds.push({ id, label: `<@${id}>` });
+    }
+
+    if (handles.length > 0) {
+      const { resolved, skipped: missingHandles } =
+        await resolveHandlesToUserIds(handles, botToken);
+
+      for (const handle of missingHandles) {
+        skipped.push({ label: `@${handle}`, reason: "not_found" });
+      }
+
+      for (const { handle, id } of resolved) {
+        candidateIds.push({ id, label: `@${handle}` });
+      }
+    }
+
+    const seen = new Set<string>();
+    for (const candidate of candidateIds) {
+      if (seen.has(candidate.id)) continue;
+      seen.add(candidate.id);
+
+      if (!ALLOW_SELF_THANKS && candidate.id === slash.user_id) {
+        skipped.push({ label: candidate.label, reason: "self" });
+        continue;
+      }
+
+      const profile = await fetchSlackUser(candidate.id, botToken);
+      if (!profile || profile.is_bot) {
+        skipped.push({
+          label: candidate.label,
+          reason: "not_found",
+        });
+        continue;
+      }
+
+      if (channelMembers && !channelMembers.has(candidate.id)) {
+        skipped.push({
+          label: mentionLabel(candidate.id, profile.name),
+          reason: "not_present",
+        });
+        continue;
+      }
+
+      recipientIds.push(candidate.id);
+    }
+  } else {
     const peerId = await resolveSoleChannelPeer(
       slash.channel_id,
       slash.user_id,
@@ -71,9 +140,14 @@ async function recordThanks(
   }
 
   if (recipientIds.length === 0) {
+    const skipNote = formatSkippedRecipients(skipped);
+    const hint = channelWide
+      ? "I couldn't thank anyone in this conversation."
+      : "Tag who you're thanking: `/thanks @person for <reason>`. In a 1:1 DM with ThankBot you can omit the mention.";
+
     await postSlackResponse(
       slash.response_url,
-      "Tag who you're thanking: `/thanks @person for <reason>`. (In a private DM I can't see the other person, so the mention is required.)",
+      [hint, skipNote].filter(Boolean).join(" "),
       false
     );
     return;
@@ -102,15 +176,27 @@ async function recordThanks(
 
     for (const recipientId of recipientIds) {
       if (!ALLOW_SELF_THANKS && recipientId === slash.user_id) {
+        skipped.push({
+          label: mentionLabel(recipientId, senderSlack?.name),
+          reason: "self",
+        });
         continue;
       }
 
       const recipientSlack = await fetchSlackUser(recipientId, botToken);
+      if (!recipientSlack || recipientSlack.is_bot) {
+        skipped.push({
+          label: `<@${recipientId}>`,
+          reason: "not_found",
+        });
+        continue;
+      }
+
       const recipient = await upsertPersonBySlackId({
         slackUserId: recipientId,
-        name: recipientSlack?.name ?? recipientId,
-        avatarUrl: recipientSlack?.avatar_url ?? null,
-        email: recipientSlack?.email ?? null,
+        name: recipientSlack.name,
+        avatarUrl: recipientSlack.avatar_url ?? null,
+        email: recipientSlack.email ?? null,
       });
 
       const result = await createSlackThanks({
@@ -129,22 +215,32 @@ async function recordThanks(
       }
     }
 
+    const skipNote = formatSkippedRecipients(skipped);
+
     if (created.length === 0) {
       await postSlackResponse(
         slash.response_url,
-        lastError ??
-          "You can't thank yourself — tag a teammate instead.",
+        [lastError ?? "Couldn't record those thanks.", skipNote]
+          .filter(Boolean)
+          .join(" "),
         false
       );
       return;
     }
 
-    const lines = created.map(
-      ({ name, url }) =>
-        `:pray: ${sender.name} thanked *${name}*: ${reason}\n${url}`
+    const receivedNames = created.map(({ name }) => `*${name}*`).join(", ");
+    const header = `:pray: ${sender.name} thanked ${receivedNames}: ${reason}`;
+    const detailLines = created.map(
+      ({ name, url }) => `• *${name}* — ${url}`
     );
 
-    await postSlackResponse(slash.response_url, lines.join("\n\n"));
+    const body = [header, ...detailLines].join("\n");
+
+    await postSlackResponse(slash.response_url, body);
+
+    if (skipNote) {
+      await postSlackResponse(slash.response_url, skipNote, false);
+    }
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Something went wrong.";
@@ -210,6 +306,9 @@ export async function POST(request: Request) {
       [
         "*Who do you want to thank, and for what?*",
         "Try: `/thanks @person for helping with the launch`",
+        "Or thank several people: `/thanks @alice @bob for shipping it`",
+        "In a channel: `/thanks everyone for the hard work`",
+        "In a 1:1 DM with ThankBot: `/thanks for covering standup`",
       ].join("\n"),
       false
     );
@@ -218,17 +317,11 @@ export async function POST(request: Request) {
   // Parsing needs no network, so answer usage mistakes straight away rather
   // than claiming the thanks is being recorded.
   const parsed = parseThanksText(slash.text);
-  const inPrivateDm = (slash.channel_id ?? "").startsWith("D");
 
   const hasRecipient =
-    parsed.recipientIds.length > 0 || parsed.handles.length > 0;
-
-  if (!hasRecipient && inPrivateDm) {
-    return slackResponse(
-      "Tag who you're thanking: `/thanks @person for <reason>`. (In a private DM I can't see who else is here, so the mention is required.)",
-      false
-    );
-  }
+    parsed.recipientIds.length > 0 ||
+    parsed.handles.length > 0 ||
+    parsed.channelWide;
 
   if (hasRecipient && !parsed.reason) {
     return slackResponse(

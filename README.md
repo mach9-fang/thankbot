@@ -5,7 +5,8 @@ teammate, and everyone sees it on the feed.
 
 - **Next.js 14** (App Router) — deployed on Vercel
 - **Supabase** — Postgres for the record of who thanked whom, plus Google auth
-- **Slack** — `/thanks @person for …` (or just a reason in a 1:1 DM)
+- **Slack** — `/thanks @person for …`, multiple `@mentions`, `everyone` in a
+  channel, or just a reason in a 1:1 DM
 
 ## How it works
 
@@ -13,10 +14,13 @@ teammate, and everyone sees it on the feed.
    in `people`, or claims an existing row with the same email.
 2. The home page form posts to `POST /api/thanks`, which sets the sender from
    the session — never from the request body.
-3. From Slack, `/thanks @person for …` hits `POST /api/slack/thanks`, which
-   upserts people by `slack_user_id` and writes a thanks with `source=slack`.
-   In a 1:1 DM you can omit the mention and ThankBot thanks the other person.
-4. The feed, leaderboard, and `/people/[id]` pages read straight from Postgres.
+3. From Slack, `/thanks @alice @bob for …` hits `POST /api/slack/thanks`, which
+   upserts people by `slack_user_id` and writes one thanks per recipient with
+   `source=slack`. You can thank a whole channel with `/thanks everyone for …`,
+   and in a 1:1 DM with ThankBot you can omit the mention. Mentions that aren't
+   in the conversation (or don't exist) are skipped and reported back.
+4. On the web, the form's typeahead lets you pick multiple teammates before
+   sending. The feed, leaderboard, and `/people/[id]` pages read from Postgres.
 
 ## Setup
 
@@ -63,7 +67,7 @@ Workspace org (external users then can't complete sign-in).
    - `commands`
    - `users:read`
    - `users:read.email` (links Slack people to Google logins by email)
-   - `im:read` and `channels:read` (so a 1:1 DM can omit the `@` mention)
+   - `im:read`, `channels:read`, and `groups:read` (1:1 DM peer + channel roster)
 3. Install the app to your workspace and copy the **Bot User OAuth Token**.
 4. Under **Basic Information**, copy the **Signing Secret**.
 5. Under **Slash Commands**, create `/thanks` pointing at:
@@ -79,7 +83,9 @@ Usage in Slack:
 
 ```
 /thanks @alex for reviewing my PR
-/thanks for covering standup   # in a 1:1 DM — thanks the other person
+/thanks @alice @bob for shipping the release
+/thanks everyone for covering on-call   # also: all, everybody, every body
+/thanks for covering standup            # in a 1:1 DM with ThankBot
 ```
 
 ### 4. Environment variables
@@ -124,7 +130,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/thanks` | Recent thanks (`?limit=50`) |
-| `POST` | `/api/thanks` | Send thanks — requires a session; body `{ to_person_id, reason }` |
+| `POST` | `/api/thanks` | Send thanks — requires a session; body `{ to_person_ids, reason }` (or legacy `to_person_id`) |
 | `POST` | `/api/slack/thanks` | Slack slash command — verified with signing secret |
 | `GET` | `/thanks/[id]` | Public thank card for a single thanks |
 | `GET` | `/api/people` | People with received/given counts |
