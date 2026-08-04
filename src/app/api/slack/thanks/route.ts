@@ -182,8 +182,7 @@ async function recordThanks(
       email: senderSlack?.email ?? null,
     });
 
-    const created: Array<{ name: string; url: string }> = [];
-    let lastError: string | null = null;
+    const recipients: Array<{ id: string; name: string }> = [];
 
     for (const recipientId of recipientIds) {
       if (!ALLOW_SELF_THANKS && recipientId === slash.user_id) {
@@ -210,28 +209,15 @@ async function recordThanks(
         email: recipientSlack.email ?? null,
       });
 
-      const result = await createSlackThanks({
-        fromPersonId: sender.id,
-        toPersonId: recipient.id,
-        reason,
-      });
-
-      if (result.ok) {
-        created.push({
-          name: recipient.name,
-          url: `${siteUrl()}/thanks/${result.thanks.id}`,
-        });
-      } else {
-        lastError = result.error;
-      }
+      recipients.push({ id: recipient.id, name: recipient.name });
     }
 
     const skipNote = formatSkippedRecipients(skipped);
 
-    if (created.length === 0) {
+    if (recipients.length === 0) {
       await postSlackResponse(
         slash.response_url,
-        [lastError ?? "Couldn't record those thanks.", skipNote]
+        ["Couldn't record those thanks.", skipNote]
           .filter(Boolean)
           .join(" "),
         false
@@ -239,13 +225,27 @@ async function recordThanks(
       return;
     }
 
-    const receivedNames = created.map(({ name }) => `*${name}*`).join(", ");
-    const header = `:pray: ${sender.name} thanked ${receivedNames}: ${reason}`;
-    const detailLines = created.map(
-      ({ name, url }) => `• *${name}* — <${url}|↗>`
-    );
+    const result = await createSlackThanks({
+      fromPersonId: sender.id,
+      toPersonIds: recipients.map(({ id }) => id),
+      reason,
+    });
 
-    const body = [header, ...detailLines].join("\n");
+    if (!result.ok) {
+      await postSlackResponse(
+        slash.response_url,
+        [result.error, skipNote].filter(Boolean).join(" "),
+        false
+      );
+      return;
+    }
+
+    const receivedNames = recipients
+      .map(({ name }) => `*${name}*`)
+      .join(", ");
+    const header = `:pray: ${sender.name} thanked ${receivedNames}: ${reason}`;
+    const url = `${siteUrl()}/thanks/${result.thanks.id}`;
+    const body = `${header}\n<${url}|↗>`;
 
     await postSlackResponse(slash.response_url, body);
 

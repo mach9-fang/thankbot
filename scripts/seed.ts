@@ -5,8 +5,7 @@
  * Run: npm run seed
  */
 import { createClient } from "@supabase/supabase-js";
-import fs from "fs";
-import path from "path";
+import { loadEnvFile } from "./load-env";
 
 loadEnvFile(".env.local");
 
@@ -63,30 +62,17 @@ async function main() {
     return;
   }
 
-  const rows = THANKS.map((entry) => ({
-    from_person_id: idByEmail.get(entry.from),
-    to_person_id: idByEmail.get(entry.to),
-    reason: entry.reason,
-    source: "seed" as const,
-  }));
-
-  const { error: thanksError } = await supabase.from("thanks").insert(rows);
-  if (thanksError) throw new Error(thanksError.message);
-
-  console.log(`Seeded ${PEOPLE.length} people and ${rows.length} thanks.`);
-}
-
-function loadEnvFile(file: string) {
-  const fullPath = path.join(process.cwd(), file);
-  if (!fs.existsSync(fullPath)) return;
-
-  for (const line of fs.readFileSync(fullPath, "utf8").split("\n")) {
-    const match = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (!match) continue;
-    const [, key, rawValue] = match;
-    if (process.env[key]) continue;
-    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+  for (const entry of THANKS) {
+    const { error: thanksError } = await supabase.rpc("create_thanks_card", {
+      p_from_person_id: idByEmail.get(entry.from),
+      p_to_person_ids: [idByEmail.get(entry.to)],
+      p_reason: entry.reason,
+      p_source: "seed",
+    });
+    if (thanksError) throw new Error(thanksError.message);
   }
+
+  console.log(`Seeded ${PEOPLE.length} people and ${THANKS.length} thanks.`);
 }
 
 main().catch((error) => {
