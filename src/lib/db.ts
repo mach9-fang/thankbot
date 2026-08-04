@@ -30,7 +30,11 @@ function mapThanks(row: ThanksQueryRow): ThanksWithPeople {
   const { recipients, ...thanks } = row;
   return {
     ...thanks,
-    to_people: recipients.map(({ person }) => person),
+    // Postgres has no order to give back here, so a card would otherwise list
+    // its recipients differently from one render to the next.
+    to_people: recipients
+      .map(({ person }) => person)
+      .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
 

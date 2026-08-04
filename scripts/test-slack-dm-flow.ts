@@ -6,6 +6,7 @@
  * Run: pnpm tsx scripts/test-slack-dm-flow.ts
  */
 import assert from "assert";
+import crypto from "crypto";
 import { loadEnvFile } from "./load-env";
 import { installSlackStub, RESPONSE_URL } from "./slack-stub";
 
@@ -13,10 +14,12 @@ loadEnvFile(".env.local");
 
 const BOT_TOKEN = "xoxb-test";
 const USER_TOKEN = "xoxp-dana";
+const SIGNING_SECRET = "test-signing-secret";
 
 process.env.SLACK_SKIP_VERIFY = "true";
 process.env.SLACK_BOT_TOKEN = BOT_TOKEN;
 process.env.SLACK_USER_TOKEN = USER_TOKEN;
+process.env.SLACK_SIGNING_SECRET = SIGNING_SECRET;
 // Assert the behaviour a real workspace sees, not the solo debug shortcut.
 process.env.NEXT_PUBLIC_ALLOW_SELF_THANKS = "false";
 
@@ -91,27 +94,64 @@ async function main() {
     throw new Error("ThankBot never replied through response_url");
   }
 
-  async function runSlash(channelId: string, text: string) {
+  function slashBody(channelId: string, text: string) {
+    return new URLSearchParams({
+      channel_id: channelId,
+      channel_name: "directmessage",
+      user_id: SENDER,
+      user_name: "dana",
+      command: "/thanks",
+      text,
+      response_url: RESPONSE_URL,
+    }).toString();
+  }
+
+  /** Sign a request the way Slack does, for the path production runs. */
+  function slackSignature(body: string, secret = SIGNING_SECRET) {
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const digest = crypto
+      .createHmac("sha256", secret)
+      .update(`v0:${timestamp}:${body}`)
+      .digest("hex");
+    return {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "x-slack-request-timestamp": timestamp,
+      "x-slack-signature": `v0=${digest}`,
+    };
+  }
+
+  function slashRequest(body: string, headers?: Record<string, string>) {
+    return new Request("http://localhost:3000/api/slack/thanks", {
+      method: "POST",
+      body,
+      headers,
+    });
+  }
+
+  async function runSlash(
+    channelId: string,
+    text: string,
+    options?: { verifySignature?: boolean }
+  ) {
     stub.replies.length = 0;
 
-    const response = await POST(
-      new Request("http://localhost:3000/api/slack/thanks", {
-        method: "POST",
-        body: new URLSearchParams({
-          channel_id: channelId,
-          channel_name: "directmessage",
-          user_id: SENDER,
-          user_name: "dana",
-          command: "/thanks",
-          text,
-          response_url: RESPONSE_URL,
-        }),
-      })
-    );
+    const body = slashBody(channelId, text);
+    let headers: Record<string, string> | undefined;
 
-    assert.strictEqual(response.status, 200);
-    const ack = (await response.json()) as { text: string };
-    assert.match(ack.text, /Recording your thanks/);
+    if (options?.verifySignature) {
+      delete process.env.SLACK_SKIP_VERIFY;
+      headers = slackSignature(body);
+    }
+
+    try {
+      const response = await POST(slashRequest(body, headers));
+
+      assert.strictEqual(response.status, 200);
+      const ack = (await response.json()) as { text: string };
+      assert.match(ack.text, /Recording your thanks/);
+    } finally {
+      process.env.SLACK_SKIP_VERIFY = "true";
+    }
 
     return waitForReply();
   }
@@ -160,6 +200,32 @@ async function main() {
     (await cardsFromSender()).length,
     1,
     "only the resolvable DM should have recorded a thanks"
+  );
+
+  // Production verifies Slack's signature rather than trusting the request.
+  await removeTestPeople();
+  const signedReply = await runSlash("D_WITH_TEAMMATE", "for covering standup", {
+    verifySignature: true,
+  });
+  assert.match(signedReply, /Dana Sender thanked \*Riley Teammate\*/);
+  assert.strictEqual(
+    (await cardsFromSender()).length,
+    1,
+    "a properly signed command should record one card"
+  );
+
+  delete process.env.SLACK_SKIP_VERIFY;
+  const forged = await POST(
+    slashRequest(slashBody("D_WITH_TEAMMATE", "for covering standup"), {
+      ...slackSignature("tampered body", "wrong-secret"),
+    })
+  );
+  process.env.SLACK_SKIP_VERIFY = "true";
+  assert.strictEqual(forged.status, 401, "a bad signature must be rejected");
+  assert.strictEqual(
+    (await cardsFromSender()).length,
+    1,
+    "a rejected command must not record anything"
   );
 
   await removeTestPeople();
