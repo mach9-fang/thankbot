@@ -5,8 +5,7 @@
  * Run: npm run seed
  */
 import { createClient } from "@supabase/supabase-js";
-import fs from "fs";
-import path from "path";
+import { loadEnvFile } from "./load-env";
 
 loadEnvFile(".env.local");
 
@@ -74,19 +73,6 @@ async function main() {
   }
 
   console.log(`Seeded ${PEOPLE.length} people and ${THANKS.length} thanks.`);
-}
-
-function loadEnvFile(file: string) {
-  const fullPath = path.join(process.cwd(), file);
-  if (!fs.existsSync(fullPath)) return;
-
-  for (const line of fs.readFileSync(fullPath, "utf8").split("\n")) {
-    const match = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (!match) continue;
-    const [, key, rawValue] = match;
-    if (process.env[key]) continue;
-    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
-  }
 }
 
 main().catch((error) => {
