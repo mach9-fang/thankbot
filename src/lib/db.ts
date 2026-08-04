@@ -229,7 +229,7 @@ export async function createThanks(input: {
       error: `Keep it under ${MAX_REASON_LENGTH} characters.`,
     };
   }
-  const toPersonIds = [...new Set(input.toPersonIds.filter(Boolean))];
+  const toPersonIds = Array.from(new Set(input.toPersonIds.filter(Boolean)));
   if (toPersonIds.length === 0) {
     return { ok: false, status: 400, error: "Pick who you want to thank." };
   }
@@ -352,7 +352,7 @@ export async function createSlackThanks(input: {
       error: `Keep it under ${MAX_REASON_LENGTH} characters.`,
     };
   }
-  const toPersonIds = [...new Set(input.toPersonIds.filter(Boolean))];
+  const toPersonIds = Array.from(new Set(input.toPersonIds.filter(Boolean)));
   if (toPersonIds.length === 0) {
     return { ok: false, status: 400, error: "Pick who you want to thank." };
   }
