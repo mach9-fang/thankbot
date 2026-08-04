@@ -234,7 +234,7 @@ async function recordThanks(
       .join(", ");
     const header = `:pray: ${sender.name} thanked ${receivedNames}: ${reason}`;
     const url = `${siteUrl()}/thanks/${result.thanks.id}`;
-    const body = `${header}\n${url}`;
+    const body = `${header}\n<${url}|↗>`;
 
     await postSlackResponse(slash.response_url, body);
 
