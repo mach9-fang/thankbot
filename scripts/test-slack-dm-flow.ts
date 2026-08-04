@@ -147,6 +147,15 @@ async function main() {
   const hiddenReply = await runSlash("D_SOMEONE_ELSES", "for covering standup");
   assert.match(hiddenReply, /won't tell ThankBot who else is in this/);
 
+  // Without the user token, say that the DM shortcut is still unconfigured.
+  delete process.env.SLACK_USER_TOKEN;
+  const unconfiguredReply = await runSlash(
+    "D_WITH_TEAMMATE",
+    "for covering standup"
+  );
+  assert.match(unconfiguredReply, /`SLACK_USER_TOKEN` is set up — ask an admin/);
+  process.env.SLACK_USER_TOKEN = USER_TOKEN;
+
   assert.strictEqual(
     (await cardsFromSender()).length,
     1,

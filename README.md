@@ -136,9 +136,17 @@ Open [http://localhost:3000](http://localhost:3000).
 2. Add `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
    `SLACK_SIGNING_SECRET`, and `SLACK_BOT_TOKEN` as environment variables.
+   Add `SLACK_USER_TOKEN` too if `/thanks <reason>` should work in 1:1 DMs.
 3. Point the domain `thankbot-jol7svuvz.previewmach9.com` at the deployment and
    make sure the same URL is in Supabase's redirect list and the Slack slash
    command Request URL.
+4. Apply any new files in `supabase/migrations/` to the hosted project as part
+   of the same release — the app reads the current schema, so a deploy that runs
+   ahead of its migration cannot render the board.
+
+Slack keeps talking to whichever deployment its slash command Request URL points
+at, so a change to `/thanks` only shows up in Slack once that deployment is the
+one carrying it.
 
 ## API
 

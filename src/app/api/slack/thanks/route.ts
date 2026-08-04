@@ -152,7 +152,9 @@ async function recordThanks(
     const skipNote = formatSkippedRecipients(skipped);
     const hint = channelWide
       ? "I couldn't thank anyone in this conversation."
-      : formatMissingRecipientHint(solePeerMiss);
+      : formatMissingRecipientHint(solePeerMiss, {
+          userTokenConfigured: Boolean(process.env.SLACK_USER_TOKEN),
+        });
 
     await postSlackResponse(
       slash.response_url,

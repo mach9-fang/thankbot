@@ -369,11 +369,20 @@ export async function resolveSoleChannelPeer(
 
 const TAG_SOMEONE = "tag who you're thanking: `/thanks @person for <reason>`";
 
-/** Explain what to do when `/thanks` couldn't work out the recipient. */
-export function formatMissingRecipientHint(miss: SolePeerMiss | null): string {
+/**
+ * Explain what to do when `/thanks` couldn't work out the recipient. Reading a
+ * 1:1 DM takes the optional `SLACK_USER_TOKEN`, so say when that setup step is
+ * what's standing in the way rather than leaving it looking like a bug.
+ */
+export function formatMissingRecipientHint(
+  miss: SolePeerMiss | null,
+  options?: { userTokenConfigured?: boolean }
+): string {
   switch (miss) {
     case "conversation_hidden":
-      return `Slack won't tell ThankBot who else is in this conversation, so ${TAG_SOMEONE}.`;
+      return options?.userTokenConfigured === false
+        ? `Slack only lets ThankBot read a 1:1 DM once \`SLACK_USER_TOKEN\` is set up — ask an admin. Until then, ${TAG_SOMEONE}.`
+        : `Slack won't tell ThankBot who else is in this conversation, so ${TAG_SOMEONE}.`;
     case "no_other_human":
       return `It's just the two of us in this DM, so ${TAG_SOMEONE}.`;
     case "several_humans":

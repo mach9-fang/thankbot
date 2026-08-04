@@ -110,6 +110,18 @@ async function main() {
     /won't tell ThankBot who else is in this conversation/
   );
   assert.match(
+    formatMissingRecipientHint("conversation_hidden", {
+      userTokenConfigured: false,
+    }),
+    /`SLACK_USER_TOKEN` is set up — ask an admin/
+  );
+  assert.match(
+    formatMissingRecipientHint("conversation_hidden", {
+      userTokenConfigured: true,
+    }),
+    /won't tell ThankBot who else is in this conversation/
+  );
+  assert.match(
     formatMissingRecipientHint("no_other_human"),
     /just the two of us/
   );
