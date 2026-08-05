@@ -157,8 +157,12 @@ async function main() {
   assert.match(dmReply, /Dana Sender thanked \*Riley Teammate\*/);
   assert.match(dmReply, /covering standup/);
 
-  const links = dmReply.match(/<[^|>]+\|↗>/g) ?? [];
-  assert.strictEqual(links.length, 1, `expected one ↗ link in: ${dmReply}`);
+  const links = dmReply.match(/<[^|>]+\|View card>/g) ?? [];
+  assert.strictEqual(
+    links.length,
+    1,
+    `expected one "View card" link in: ${dmReply}`
+  );
 
   const cards = await cardsFromSender();
   assert.strictEqual(cards.length, 1, "the DM should record exactly one thanks");
