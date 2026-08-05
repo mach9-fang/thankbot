@@ -242,7 +242,7 @@ async function recordThanks(
     const receivedNames = created.map(({ name }) => `*${name}*`).join(", ");
     const header = `:pray: ${sender.name} thanked ${receivedNames}: ${reason}`;
     const detailLines = created.map(
-      ({ name, url }) => `• *${name}* — <${url}|↗>`
+      ({ name, url }) => `• *${name}* — <${url}|View card>`
     );
 
     const body = [header, ...detailLines].join("\n");
