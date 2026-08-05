@@ -154,8 +154,10 @@ async function main() {
 
   // A 1:1 DM with a teammate: the reason alone is enough.
   const dmReply = await runSlash("D_WITH_TEAMMATE", "for covering standup");
-  assert.match(dmReply, /Dana Sender thanked \*Riley Teammate\*/);
-  assert.match(dmReply, /covering standup/);
+  assert.match(
+    dmReply,
+    /^:pray: Dana Sender thanked \*Riley Teammate\*: covering standup — <[^|>]+\|View card>$/
+  );
 
   const links = dmReply.match(/<[^|>]+\|View card>/g) ?? [];
   assert.strictEqual(
@@ -203,7 +205,10 @@ async function main() {
   const signedReply = await runSlash("D_WITH_TEAMMATE", "for covering standup", {
     verifySignature: true,
   });
-  assert.match(signedReply, /Dana Sender thanked \*Riley Teammate\*/);
+  assert.match(
+    signedReply,
+    /^:pray: Dana Sender thanked \*Riley Teammate\*: covering standup — <[^|>]+\|View card>$/
+  );
   assert.strictEqual(
     (await cardsFromSender()).length,
     1,
