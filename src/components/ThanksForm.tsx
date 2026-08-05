@@ -111,17 +111,9 @@ export function ThanksForm({
       <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-ink-900">
         Say thanks
       </h2>
-      <p className="mt-1 text-sm text-ink-500">
-        Posting as {currentPerson.name}
-      </p>
 
       <label className="mt-4 block">
-        <span className="text-sm font-medium text-ink-700">
-          Teammates
-        </span>
-        <p className="mt-0.5 text-xs text-ink-500">
-          Type to search, then add as many people as you like.
-        </p>
+        <span className="text-sm font-medium text-ink-700">To whom</span>
         <div className="mt-1.5">
           <PersonTypeahead
             people={teammates}
@@ -135,7 +127,7 @@ export function ThanksForm({
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
         <label className="block min-w-0 flex-1">
-          <span className="text-sm font-medium text-ink-700">For what?</span>
+          <span className="text-sm font-medium text-ink-700">For what</span>
           <input
             value={reason}
             onChange={(event) => setReason(event.target.value)}
@@ -151,7 +143,7 @@ export function ThanksForm({
           disabled={status === "sending" || teammates.length === 0}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-brand-600 to-brand-400 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-brand-600/25 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 sm:mb-0"
         >
-          {status === "sending" ? "Sending…" : "Send thanks"}
+          {status === "sending" ? "Sending…" : "Send"}
         </button>
       </div>
 
