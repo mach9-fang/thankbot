@@ -15,8 +15,8 @@ teammate, and everyone sees it on the feed.
 2. The home page form posts to `POST /api/thanks`, which sets the sender from
    the session — never from the request body.
 3. From Slack, `/thanks @alice @bob for …` hits `POST /api/slack/thanks`, which
-   upserts people by `slack_user_id` and writes one thanks per recipient with
-   `source=slack`. You can thank a whole channel with `/thanks everyone for …`,
+   upserts people by `slack_user_id` and writes one card shared by all recipients
+   with `source=slack`. You can thank a whole channel with `/thanks everyone for …`,
    and omit the mention wherever ThankBot can see exactly one other person —
    including a 1:1 DM with a teammate once `SLACK_USER_TOKEN` is set (see below).
    Mentions that aren't in the conversation (or don't exist) are skipped and
@@ -34,7 +34,8 @@ Run the files in `supabase/migrations/` in order in the Supabase SQL editor (or
 | Object | Purpose |
 |--------|---------|
 | `people` | One row per employee (`email`, `name`, `avatar_url`, optional `auth_user_id`, `slack_user_id`) |
-| `thanks` | `from_person_id` → `to_person_id` with a `reason` and `source` |
+| `thanks` | One card with a sender, `reason`, and `source` |
+| `thank_recipients` | The people recognized by each card |
 | `people_with_stats` | View adding `thanks_received` / `thanks_given` |
 
 Row Level Security is on: anyone can read the board, but a web thanks can only
@@ -139,6 +140,13 @@ Open [http://localhost:3000](http://localhost:3000).
 3. Point the domain `thankbot-jol7svuvz.previewmach9.com` at the deployment and
    make sure the same URL is in Supabase's redirect list and the Slack slash
    command Request URL.
+4. Apply any new files in `supabase/migrations/` to the hosted project as part
+   of the same release — the app reads the current schema, so a deploy that runs
+   ahead of its migration cannot render the board.
+
+Slack keeps talking to whichever deployment its slash command Request URL points
+at, so a change to `/thanks` only shows up in Slack once that deployment is the
+one carrying it.
 
 ## API
 
@@ -147,7 +155,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `GET` | `/api/thanks` | Recent thanks (`?limit=50`) |
 | `POST` | `/api/thanks` | Send thanks — requires a session; body `{ to_person_ids, reason }` (or legacy `to_person_id`) |
 | `POST` | `/api/slack/thanks` | Slack slash command — verified with signing secret |
-| `GET` | `/thanks/[id]` | Public thank card for a single thanks |
+| `GET` | `/thanks/[id]` | Public card for one thanks, with one or more recipients |
 | `GET` | `/api/people` | People with received/given counts |
 | `GET` | `/api/people/[id]` | Person + received/given history |
 

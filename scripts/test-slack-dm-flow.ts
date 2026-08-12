@@ -58,26 +58,32 @@ async function main() {
     if (error) throw new Error(error.message);
   }
 
-  async function personIdBySlackId(slackUserId: string) {
-    const { data, error } = await supabase
+  async function cardsFromSender() {
+    const sender = await supabase
       .from("people")
       .select("id")
-      .eq("slack_user_id", slackUserId)
+      .eq("slack_user_id", SENDER)
       .maybeSingle();
-    if (error) throw new Error(error.message);
-    return data?.id ?? null;
-  }
-
-  async function cardsFromSender() {
-    const senderId = await personIdBySlackId(SENDER);
-    if (!senderId) return [];
+    if (sender.error) throw new Error(sender.error.message);
+    if (!sender.data) return [];
 
     const { data, error } = await supabase
       .from("thanks")
-      .select("id, reason, source, to_person_id")
-      .eq("from_person_id", senderId);
+      .select("id, reason, source")
+      .eq("from_person_id", sender.data.id);
     if (error) throw new Error(error.message);
     return data ?? [];
+  }
+
+  async function recipientNames(thanksId: string) {
+    const { data, error } = await supabase
+      .from("thank_recipients")
+      .select("person:people (name)")
+      .eq("thanks_id", thanksId);
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as unknown as Array<{ person: { name: string } }>)
+      .map(({ person }) => person.name)
+      .sort();
   }
 
   async function waitForReply() {
@@ -167,14 +173,16 @@ async function main() {
   );
 
   const cards = await cardsFromSender();
-  assert.strictEqual(cards.length, 1, "the DM should record exactly one thanks");
+  assert.strictEqual(cards.length, 1, "the DM should record exactly one card");
   assert.strictEqual(cards[0].reason, "covering standup");
   assert.strictEqual(cards[0].source, "slack");
-  assert.strictEqual(cards[0].to_person_id, await personIdBySlackId(TEAMMATE));
   assert.ok(
     links[0].includes(`/thanks/${cards[0].id}`),
     `link ${links[0]} should point at card ${cards[0].id}`
   );
+  assert.deepStrictEqual(await recipientNames(cards[0].id), [
+    "Riley Teammate",
+  ]);
 
   // A 1:1 DM with ThankBot has nobody to thank, so it says so.
   const botDmReply = await runSlash("D_WITH_THANKBOT", "for covering standup");
@@ -212,7 +220,7 @@ async function main() {
   assert.strictEqual(
     (await cardsFromSender()).length,
     1,
-    "a properly signed command should record one thanks"
+    "a properly signed command should record one card"
   );
 
   delete process.env.SLACK_SKIP_VERIFY;

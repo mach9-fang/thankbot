@@ -41,20 +41,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const created = [];
-  for (const id of recipientIds) {
-    const result = await createThanks({ toPersonId: id, reason });
-    if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: result.status });
-    }
-    created.push(result.thanks);
+  const result = await createThanks({ toPersonIds: recipientIds, reason });
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
   return NextResponse.json(
-    {
-      thanks: created[0],
-      thanks_list: created,
-    },
+    { thanks: result.thanks },
     { status: 201 }
   );
 }

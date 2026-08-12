@@ -13,7 +13,6 @@ export type ThanksSource = "slack" | "web" | "seed";
 export type Thanks = {
   id: string;
   from_person_id: string;
-  to_person_id: string;
   reason: string;
   source: ThanksSource;
   created_at: string;
@@ -23,7 +22,7 @@ export type PersonSummary = Pick<Person, "id" | "name" | "avatar_url">;
 
 export type ThanksWithPeople = Thanks & {
   from_person: PersonSummary;
-  to_person: PersonSummary;
+  to_people: PersonSummary[];
 };
 
 export type PersonWithStats = Person & {
