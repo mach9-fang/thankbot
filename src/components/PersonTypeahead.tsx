@@ -13,6 +13,29 @@ import { Avatar } from "./Avatar";
 
 type TypeaheadPerson = PersonSummary & { email?: string | null };
 
+/**
+ * People type or paste a list the way they'd write it — "Ada, Bo and Cy" —
+ * so anything that reads as "next name" ends the one being typed.
+ */
+const RECIPIENT_SEPARATOR = /\s*(?:[,;\n]|&|\band\b)\s*/;
+
+function matchPerson(people: TypeaheadPerson[], text: string) {
+  const needle = text.trim().toLowerCase();
+  if (!needle) return null;
+
+  const exact = people.filter(
+    (person) =>
+      person.name.toLowerCase() === needle ||
+      (person.email ?? "").toLowerCase() === needle
+  );
+  if (exact.length === 1) return exact[0];
+
+  const partial = people.filter((person) =>
+    `${person.name} ${person.email ?? ""}`.toLowerCase().includes(needle)
+  );
+  return partial.length === 1 ? partial[0] : null;
+}
+
 export function PersonTypeahead({
   people,
   selected,
@@ -71,6 +94,41 @@ export function PersonTypeahead({
     setQuery("");
     setOpen(true);
     inputRef.current?.focus();
+  }
+
+  /**
+   * A separator finishes the name in front of it. Anything that doesn't point
+   * at exactly one teammate stays in the box so it can be corrected.
+   */
+  function handleInput(value: string) {
+    setOpen(true);
+
+    if (!RECIPIENT_SEPARATOR.test(value)) {
+      setQuery(value);
+      return;
+    }
+
+    const parts = value.split(RECIPIENT_SEPARATOR);
+    const stillTyping = parts.pop() ?? "";
+    const available = people.filter((person) => !selectedIds.has(person.id));
+    const added: TypeaheadPerson[] = [];
+    const unmatched: string[] = [];
+
+    for (const part of parts) {
+      if (!part.trim()) continue;
+      const person = matchPerson(
+        available.filter((candidate) => !added.includes(candidate)),
+        part
+      );
+      if (person) {
+        added.push(person);
+      } else {
+        unmatched.push(part.trim());
+      }
+    }
+
+    if (added.length > 0) onChange([...selected, ...added]);
+    setQuery([...unmatched, stillTyping].filter(Boolean).join(", "));
   }
 
   function removePerson(id: string) {
@@ -164,10 +222,7 @@ export function PersonTypeahead({
               ? `${listId}-option-${matches[activeIndex].id}`
               : undefined
           }
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setOpen(true);
-          }}
+          onChange={(event) => handleInput(event.target.value)}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
           className="min-w-[8rem] flex-1 bg-transparent py-1 text-sm text-ink-900 outline-none placeholder:text-ink-400"

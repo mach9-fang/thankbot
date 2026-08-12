@@ -10,6 +10,12 @@ create index if not exists thank_recipients_person_idx
   on public.thank_recipients (person_id);
 
 -- Carry over every card written while a thanks held a single recipient.
+--
+-- Thanking several people used to write one row each, so a single command left
+-- the board showing the same message several times over. Those rows are folded
+-- back into one card: same sender, same wording, same source, written close
+-- enough together to have come from one command (each recipient cost a couple
+-- of Slack lookups, so allow a few minutes between them).
 do $$
 begin
   if exists (
@@ -19,10 +25,56 @@ begin
       and table_name = 'thanks'
       and column_name = 'to_person_id'
   ) then
-    insert into public.thank_recipients (thanks_id, person_id)
-    select id, to_person_id
-    from public.thanks
-    on conflict do nothing;
+    execute $migrate$
+      with ordered as (
+        select
+          t.id,
+          t.to_person_id,
+          t.from_person_id,
+          t.reason,
+          t.source,
+          t.created_at,
+          lag(t.created_at) over (
+            partition by t.from_person_id, t.reason, t.source
+            order by t.created_at, t.id
+          ) as previous_created_at
+        from public.thanks t
+      ),
+      batched as (
+        select
+          ordered.*,
+          count(*) filter (
+            where previous_created_at is null
+              or created_at - previous_created_at > interval '5 minutes'
+          ) over (
+            partition by from_person_id, reason, source
+            order by created_at, id
+            rows between unbounded preceding and current row
+          ) as batch
+        from ordered
+      ),
+      grouped as (
+        select
+          id,
+          to_person_id,
+          first_value(id) over (
+            partition by from_person_id, reason, source, batch
+            order by created_at, id
+          ) as card_id
+        from batched
+      ),
+      carried as (
+        insert into public.thank_recipients (thanks_id, person_id)
+        select card_id, to_person_id
+        from grouped
+        on conflict do nothing
+        returning 1
+      )
+      delete from public.thanks t
+      using grouped g
+      where t.id = g.id
+        and g.id <> g.card_id
+    $migrate$;
   end if;
 end $$;
 
