@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
+import { getAuthUser } from "@/lib/auth";
 import { createThanks, listThanks } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  if (!(await getAuthUser())) {
+    return NextResponse.json(
+      { error: "Sign in to see the board." },
+      { status: 401 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const limit = Math.min(Number(searchParams.get("limit") ?? "50") || 50, 200);
 

@@ -14,7 +14,7 @@ export function ThanksForm({
   currentPerson,
   people,
 }: {
-  currentPerson: Person | null;
+  currentPerson: Person;
   people: FormPerson[];
 }) {
   const router = useRouter();
@@ -27,29 +27,9 @@ export function ThanksForm({
     () =>
       ALLOW_SELF_THANKS
         ? people
-        : people.filter((person) => person.id !== currentPerson?.id),
-    [people, currentPerson?.id]
+        : people.filter((person) => person.id !== currentPerson.id),
+    [people, currentPerson.id]
   );
-
-  if (!currentPerson) {
-    return (
-      <div className="rounded-2xl border border-brand-100 bg-white/80 p-6 shadow-sm">
-        <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-ink-900">
-          Say thanks
-        </h2>
-        <p className="mt-2 text-sm text-ink-600">
-          Sign in with your work Google account to thank a teammate.
-        </p>
-        <a
-          href="/auth/signin"
-          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-ink-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-ink-800"
-        >
-          <GoogleMark />
-          Sign in with Google
-        </a>
-      </div>
-    );
-  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -158,16 +138,5 @@ export function ThanksForm({
         <p className="mt-3 text-right text-sm text-heart-600">{error}</p>
       ) : null}
     </form>
-  );
-}
-
-function GoogleMark() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4">
-      <path
-        fill="#EA4335"
-        d="M12 10.2v3.9h5.5c-.24 1.4-1.7 4.1-5.5 4.1A6.2 6.2 0 1 1 15.9 7.3l2.7-2.6A9.9 9.9 0 0 0 12 2a10 10 0 1 0 0 20c5.8 0 9.6-4.1 9.6-9.8 0-.7-.08-1.3-.2-2H12z"
-      />
-    </svg>
   );
 }

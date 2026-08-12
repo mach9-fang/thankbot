@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAuthUser } from "@/lib/auth";
 import { getPerson, listThanksForPerson } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -7,6 +8,13 @@ export async function GET(
   _request: Request,
   { params }: { params: { id: string } }
 ) {
+  if (!(await getAuthUser())) {
+    return NextResponse.json(
+      { error: "Sign in to see the board." },
+      { status: 401 }
+    );
+  }
+
   const person = await getPerson(params.id);
   if (!person) {
     return NextResponse.json({ error: "Person not found" }, { status: 404 });
