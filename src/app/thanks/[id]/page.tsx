@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { formatThanksWhen } from "@/components/ThanksCard";
+import { requireAuthUser } from "@/lib/auth";
 import { getThanks } from "@/lib/db";
 import { emojifyText } from "@/lib/emoji";
 
@@ -29,6 +30,8 @@ export default async function ThanksPage({
 }: {
   params: { id: string };
 }) {
+  await requireAuthUser(`/thanks/${params.id}`);
+
   const thanks = await getThanks(params.id);
   if (!thanks) {
     notFound();

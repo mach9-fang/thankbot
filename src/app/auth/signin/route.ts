@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sanitizeNext } from "@/lib/auth-paths";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { resolveOrigin } from "@/lib/supabase/origin";
 
@@ -6,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const next = searchParams.get("next") ?? "/";
+  const next = sanitizeNext(searchParams.get("next"));
   const origin = resolveOrigin(request);
 
   const supabase = createServerSupabase();
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
 
   if (error || !data.url) {
     return NextResponse.redirect(
-      `${origin}/?error=${encodeURIComponent(error?.message ?? "Could not start Google sign-in.")}`
+      `${origin}/login?error=${encodeURIComponent(error?.message ?? "Could not start Google sign-in.")}`
     );
   }
 

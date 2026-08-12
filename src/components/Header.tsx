@@ -5,7 +5,8 @@ import { Avatar } from "./Avatar";
 
 export async function Header() {
   // The header lives in the layout, so a Supabase outage or missing config
-  // should degrade to the signed-out state rather than blank the whole app.
+  // should degrade to the signed-out state (brand only) rather than blank the
+  // whole app. Signing in happens on /login, the one page visitors can reach.
   const currentPerson = await getCurrentPerson().catch((error) => {
     console.error("Header: could not load the current person", error);
     return null;
@@ -51,14 +52,7 @@ export async function Header() {
               </button>
             </form>
           </div>
-        ) : (
-          <a
-            href="/auth/signin"
-            className="rounded-xl bg-brand-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm shadow-brand-600/20 transition hover:bg-brand-700"
-          >
-            Sign in with Google
-          </a>
-        )}
+        ) : null}
       </div>
     </header>
   );

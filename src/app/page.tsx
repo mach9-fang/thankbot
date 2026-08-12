@@ -1,20 +1,14 @@
 import { Leaderboard } from "@/components/Leaderboard";
 import { ThanksCard } from "@/components/ThanksCard";
 import { ThanksForm } from "@/components/ThanksForm";
-import { getCurrentPerson, listPeople, listThanks } from "@/lib/db";
+import { requireCurrentPerson } from "@/lib/auth";
+import { listPeople, listThanks } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage({
-  searchParams,
-}: {
-  searchParams: { error?: string };
-}) {
-  const [thanks, people, currentPerson] = await Promise.all([
-    listThanks(50),
-    listPeople(),
-    getCurrentPerson(),
-  ]);
+export default async function HomePage() {
+  const currentPerson = await requireCurrentPerson();
+  const [thanks, people] = await Promise.all([listThanks(50), listPeople()]);
 
   return (
     <div className="space-y-6">
@@ -43,12 +37,6 @@ export default async function HomePage({
           </div>
         </div>
       </section>
-
-      {searchParams.error ? (
-        <p className="rounded-2xl border border-heart-200 bg-heart-50 px-4 py-3 text-sm text-heart-700">
-          {searchParams.error}
-        </p>
-      ) : null}
 
       <ThanksForm currentPerson={currentPerson} people={people} />
 
