@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
+import { ConfettiOnOpen } from "@/components/ConfettiOnOpen";
 import { formatThanksWhen } from "@/components/ThanksCard";
 import { requireAuthUser } from "@/lib/auth";
 import { getThanks } from "@/lib/db";
@@ -44,6 +45,7 @@ export default async function ThanksPage({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <ConfettiOnOpen />
       <Link
         href="/"
         className="inline-flex items-center gap-1 text-sm text-ink-500 transition hover:text-brand-700"
