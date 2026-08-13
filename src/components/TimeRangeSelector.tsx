@@ -26,7 +26,6 @@ export function TimeRangeSelector({
     } else {
       params.delete("range");
     }
-    params.delete("error");
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }

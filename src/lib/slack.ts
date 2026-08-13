@@ -27,9 +27,36 @@ export type SkippedRecipient = {
   reason: "not_found" | "not_present" | "self";
 };
 
-const CHANNEL_WIDE_PATTERN =
-  /^(?:all|everyone|everybody|every\s+body)(?=\s|$)/i;
+/** Stands in for a recipient while the rest of the text is tidied up. */
+const SLOT = "\u0000";
+
+/**
+ * What people put between names: commas, semicolons, slashes, ampersands,
+ * plus signs, "and" (with or without an Oxford comma), or nothing but a space.
+ */
+const BETWEEN_RECIPIENTS = String.raw`[\s,;&+/]*(?:(?:and|plus)[\s,;&+/]*)?`;
+
+// Slack IDs are typically like U123ABCDEF; allow underscores for local/demo IDs too
+const MENTION_PATTERN = /<@([A-Z0-9_]+)(?:\|[^>]+)?>/gi;
 const SPECIAL_EVERYONE_PATTERN = /<!(?:everyone|channel)(?:\|[^>]+)?>/gi;
+// A handle never follows a word character, so "me@example.com" stays reason text.
+const HANDLE_PATTERN = /(?<![\w.%+-])@([A-Za-z0-9._'-]+)/g;
+const CHANNEL_WIDE = String.raw`(?:all|everyone|everybody|every\s+body)(?![\w'-])`;
+const CHANNEL_WIDE_PATTERN = new RegExp(`^${CHANNEL_WIDE}`, "i");
+
+const RECIPIENT_RUN_PATTERN = new RegExp(
+  `${SLOT}(?:${BETWEEN_RECIPIENTS}${SLOT})+`,
+  "g"
+);
+/** "thanks to @alice …" — how the list was addressed, not why. */
+const ADDRESS_PATTERN = new RegExp(
+  `^\\s*(?:(?:thanks|thank\\s+you|thx|ty)\\b[\\s:,-]*)?(?:to\\b[\\s:,-]*)?(?=${SLOT}|${CHANNEL_WIDE})`,
+  "i"
+);
+/** The names, plus whatever punctuation introduced the reason after them. */
+const RECIPIENT_PREFIX_PATTERN = new RegExp(
+  `^\\s*${SLOT}\\s*[,;:.!?—–-]*\\s*`
+);
 
 /**
  * Parse `/thanks @alice @bob for shipping the release`.
@@ -38,52 +65,75 @@ const SPECIAL_EVERYONE_PATTERN = /<!(?:everyone|channel)(?:\|[^>]+)?>/gi;
  * channels, users, and links" turned on. Otherwise mentions arrive as plain
  * `@alice` text, so those handles come back separately for name lookup.
  *
+ * Recipients can be listed however they were typed — `@alice @bob`,
+ * `@alice, @bob`, `@alice, @bob, and @carol`, `@alice; @bob`, `@alice & @bob`
+ * — and the separators are dropped rather than left at the front of the
+ * reason. Only separators sitting between two names are removed, so an "and"
+ * or a comma inside the reason itself survives.
+ *
  * Channel-wide forms: `/thanks everyone for …`, `/thanks all for …`,
  * `/thanks every body for …`, or Slack's `<!everyone>` / `<!channel>`.
  */
 export function parseThanksText(text: string): ParsedThanksText {
-  // Slack IDs are typically like U123ABCDEF; allow underscores for local/demo IDs too
-  const mentionPattern = /<@([A-Z0-9_]+)(?:\|[^>]+)?>/gi;
   const recipientIds: string[] = [];
-  let match: RegExpExecArray | null;
-
-  while ((match = mentionPattern.exec(text)) !== null) {
-    recipientIds.push(match[1]);
-  }
-
-  const hasSpecialEveryone = SPECIAL_EVERYONE_PATTERN.test(text);
-  SPECIAL_EVERYONE_PATTERN.lastIndex = 0;
-
-  let withoutEscaped = text
-    .replace(/<@([A-Z0-9_]+)(?:\|[^>]+)?>/gi, " ")
-    .replace(SPECIAL_EVERYONE_PATTERN, " ");
-
-  const handlePattern = /(?:^|\s)@([A-Za-z0-9._'-]+)/g;
   const handles: string[] = [];
-  while ((match = handlePattern.exec(withoutEscaped)) !== null) {
-    handles.push(match[1]);
-  }
+  let channelWide = false;
 
-  withoutEscaped = withoutEscaped
-    .replace(/(?:^|\s)@[A-Za-z0-9._'-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  let working = text
+    .replace(MENTION_PATTERN, (_match, id: string) => {
+      addUnique(recipientIds, id);
+      return SLOT;
+    })
+    .replace(SPECIAL_EVERYONE_PATTERN, () => {
+      channelWide = true;
+      return SLOT;
+    })
+    .replace(HANDLE_PATTERN, (match: string, handle: string) => {
+      // "@bob." ends a sentence; the trailing punctuation isn't part of a name.
+      const trimmed = handle.replace(/[._'-]+$/, "");
+      if (!trimmed) return match;
+      addUnique(handles, trimmed);
+      return SLOT;
+    });
 
-  let channelWide = hasSpecialEveryone;
-  let reason = withoutEscaped;
+  working = working
+    .replace(RECIPIENT_RUN_PATTERN, SLOT)
+    .replace(ADDRESS_PATTERN, "");
 
   if (!channelWide && recipientIds.length === 0 && handles.length === 0) {
-    const channelWideMatch = withoutEscaped.match(CHANNEL_WIDE_PATTERN);
-    if (channelWideMatch) {
+    const keyword = working.match(CHANNEL_WIDE_PATTERN);
+    if (keyword) {
       channelWide = true;
-      reason = withoutEscaped.slice(channelWideMatch[0].length).trim();
+      working = SLOT + working.slice(keyword[0].length);
     }
   }
 
-  // Drop a leading "for" if present: "/thanks @bob for helping"
-  reason = reason.replace(/^for\s+/i, "").trim();
+  return { recipientIds, handles, reason: readReason(working), channelWide };
+}
 
-  return { recipientIds, handles, reason, channelWide };
+function addUnique(values: string[], value: string) {
+  if (values.some((existing) => existing.toLowerCase() === value.toLowerCase())) {
+    return;
+  }
+  values.push(value);
+}
+
+/** Whatever is left once the recipient list has been lifted out of the text. */
+function readReason(working: string): string {
+  return (
+    working
+      .replace(RECIPIENT_PREFIX_PATTERN, "")
+      // A name dropped into the middle of a sentence leaves the sentence.
+      .replace(new RegExp(SLOT, "g"), " ")
+      .replace(/\s+([,.;:!?])/g, "$1")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^[,;:&+/-]+\s*/, "")
+      // "/thanks @bob for helping" reads as "Bob — helping".
+      .replace(/^for\s+/i, "")
+      .replace(/[\s,;:&+/]+$/, "")
+      .trim()
+  );
 }
 
 export function verifySlackRequest(
@@ -247,6 +297,45 @@ export async function listChannelMemberIds(
   }
 }
 
+/** The Slack user a token was granted by, via `auth.test`. */
+export async function fetchTokenOwner(
+  token: string
+): Promise<string | null> {
+  if (!token) {
+    return null;
+  }
+
+  try {
+    const res = await fetch("https://slack.com/api/auth.test", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      cache: "no-store",
+    });
+
+    const data = (await res.json()) as { ok: boolean; user_id?: string };
+    return data.ok ? (data.user_id ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function humanProfilesFor(
+  memberIds: Iterable<string>,
+  botToken: string
+): Promise<SlackUserProfile[]> {
+  const profiles = await Promise.all(
+    Array.from(memberIds).map((id) => fetchSlackUser(id, botToken))
+  );
+
+  return profiles.filter(
+    (profile): profile is SlackUserProfile =>
+      profile !== null && !profile.is_bot
+  );
+}
+
 /**
  * Human (non-bot) members of a channel, optionally excluding the sender.
  */
@@ -265,29 +354,92 @@ export async function listChannelHumanMembers(
     (id) => options?.includeSender || id !== senderId
   );
 
-  const profiles = await Promise.all(
-    candidateIds.map((id) => fetchSlackUser(id, botToken))
-  );
-
-  return profiles.filter(
-    (profile): profile is SlackUserProfile =>
-      profile !== null && !profile.is_bot
-  );
+  return humanProfilesFor(candidateIds, botToken);
 }
+
+/** Why `/thanks <reason>` could not pick a recipient on its own. */
+export type SolePeerMiss =
+  /** Slack hides the roster of conversations ThankBot isn't a member of. */
+  | "conversation_hidden"
+  /** ThankBot is the only company here, as in its own 1:1 DM. */
+  | "no_other_human"
+  /** Several people could be meant, so ThankBot shouldn't guess. */
+  | "several_humans";
+
+export type SolePeerResolution =
+  | { peerId: string; miss: null }
+  | { peerId: null; miss: SolePeerMiss };
 
 /**
  * When `/thanks` has no @mention, thank the other human in a 1:1 chat.
- * Slack only lets the bot inspect conversations it belongs to, so this
- * returns null for DMs between two people that ThankBot isn't part of —
- * callers should ask for an explicit mention in that case.
+ *
+ * A bot token may only inspect conversations the bot belongs to, which leaves
+ * out every DM between two people. `userToken` (Slack's `im:read` user scope)
+ * covers those, but only for the person who granted it, so it is used solely
+ * for that person's own commands. A 1:1 DM with ThankBot itself still has no
+ * one to thank (`no_other_human`), and the returned `miss` lets callers say
+ * which case they hit instead of repeating one generic hint.
  */
 export async function resolveSoleChannelPeer(
   channelId: string | undefined,
   senderId: string,
-  botToken: string
-): Promise<string | null> {
-  const humans = await listChannelHumanMembers(channelId, senderId, botToken);
-  return humans.length === 1 ? humans[0].id : null;
+  botToken: string,
+  options?: { allowSelf?: boolean; userToken?: string }
+): Promise<SolePeerResolution> {
+  let memberIds = await listChannelMemberIds(channelId, botToken);
+
+  if (!memberIds && options?.userToken) {
+    const owner = await fetchTokenOwner(options.userToken);
+    if (owner === senderId) {
+      memberIds = await listChannelMemberIds(channelId, options.userToken);
+    }
+  }
+
+  if (!memberIds) {
+    return { peerId: null, miss: "conversation_hidden" };
+  }
+
+  const humans = await humanProfilesFor(memberIds, botToken);
+  const others = humans.filter((person) => person.id !== senderId);
+
+  if (others.length === 1) {
+    return { peerId: others[0].id, miss: null };
+  }
+  if (others.length > 1) {
+    return { peerId: null, miss: "several_humans" };
+  }
+
+  // Alone with ThankBot: only useful while a single person tries the flow out.
+  if (options?.allowSelf && humans.some((person) => person.id === senderId)) {
+    return { peerId: senderId, miss: null };
+  }
+
+  return { peerId: null, miss: "no_other_human" };
+}
+
+const TAG_SOMEONE = "tag who you're thanking: `/thanks @person for <reason>`";
+
+/**
+ * Explain what to do when `/thanks` couldn't work out the recipient. Reading a
+ * 1:1 DM takes the optional `SLACK_USER_TOKEN`, so say when that setup step is
+ * what's standing in the way rather than leaving it looking like a bug.
+ */
+export function formatMissingRecipientHint(
+  miss: SolePeerMiss | null,
+  options?: { userTokenConfigured?: boolean }
+): string {
+  switch (miss) {
+    case "conversation_hidden":
+      return options?.userTokenConfigured === false
+        ? `Slack only lets ThankBot read a 1:1 DM once \`SLACK_USER_TOKEN\` is set up — ask an admin. Until then, ${TAG_SOMEONE}.`
+        : `Slack won't tell ThankBot who else is in this conversation, so ${TAG_SOMEONE}.`;
+    case "no_other_human":
+      return `It's just the two of us in this DM, so ${TAG_SOMEONE}.`;
+    case "several_humans":
+      return `There's more than one person here, so ${TAG_SOMEONE} — or thank everybody with \`/thanks everyone for <reason>\`.`;
+    default:
+      return `Tag who you're thanking: \`/thanks @person for <reason>\`. In a conversation ThankBot shares with one teammate you can omit the mention.`;
+  }
 }
 
 function normalizeHandle(value: string): string {

@@ -3,20 +3,245 @@ import { createServerSupabase } from "./supabase/server";
 import { emojifyText } from "./emoji";
 import type {
   Person,
+  PersonSummary,
   PersonWithStats,
+  Thanks,
   ThanksWithPeople,
 } from "./types";
 
-const THANKS_SELECT = `
+/** Thanks + sender only. Recipients are loaded separately so a missing
+ *  `thank_recipients` grant or pre-migration schema cannot blank the board. */
+const THANKS_CORE_SELECT = `
   id,
   from_person_id,
-  to_person_id,
   reason,
   source,
   created_at,
-  from_person:people!thanks_from_person_id_fkey (id, name, avatar_url),
-  to_person:people!thanks_to_person_id_fkey (id, name, avatar_url)
+  from_person:people!thanks_from_person_id_fkey (id, name, avatar_url)
 `;
+
+type ThanksCoreRow = Thanks & { from_person: PersonSummary };
+
+type BoardClient = { from: ReturnType<typeof createServerSupabase>["from"] };
+
+type WriteClient = BoardClient & {
+  rpc: ReturnType<typeof createServerSupabase>["rpc"];
+};
+
+type QueryError = { code?: string | null; message?: string | null };
+
+/** PostgREST hides a function it cannot see behind PGRST202 rather than a 500. */
+function isMissingFunction(error: QueryError | null): boolean {
+  if (!error) return false;
+  return (
+    error.code === "PGRST202" ||
+    /could not find the function/i.test(error.message ?? "")
+  );
+}
+
+/** Pre-0004 boards still carry the NOT NULL `thanks.to_person_id` column. */
+function isMissingRecipientColumn(error: QueryError | null): boolean {
+  if (!error) return false;
+  return (
+    error.code === "23502" ||
+    /to_person_id/i.test(error.message ?? "")
+  );
+}
+
+/**
+ * Record one card and everyone it names.
+ *
+ * The `create_thanks_card` RPC does both inserts in one transaction and is the
+ * path every migrated database takes. A database still waiting for
+ * `0004_group_thanks_recipients.sql` has no such function, and PostgREST
+ * answers PGRST202 — which used to surface to the sender as "Could not find
+ * the function public.create_thanks_card ... in the schema cache" and lose the
+ * thanks entirely. Fall back to writing the rows directly so a pending
+ * migration degrades the shape of the card instead of refusing the thanks.
+ */
+export async function insertThanksCard(
+  supabase: WriteClient,
+  input: {
+    fromPersonId: string;
+    toPersonIds: string[];
+    reason: string;
+    source: "web" | "slack" | "seed";
+  }
+): Promise<{ id: string } | { error: string }> {
+  const { fromPersonId, toPersonIds, reason, source } = input;
+
+  const viaRpc = await supabase.rpc("create_thanks_card", {
+    p_from_person_id: fromPersonId,
+    p_to_person_ids: toPersonIds,
+    p_reason: reason,
+    p_source: source,
+  });
+
+  if (!viaRpc.error) return { id: viaRpc.data as string };
+  if (!isMissingFunction(viaRpc.error)) return { error: viaRpc.error.message };
+
+  console.warn(
+    "create_thanks_card is missing; apply supabase/migrations/0004_group_thanks_recipients.sql. Writing the thanks directly."
+  );
+
+  const card = await supabase
+    .from("thanks")
+    .insert({ from_person_id: fromPersonId, reason, source })
+    .select("id")
+    .single();
+
+  if (!card.error) {
+    const thanksId = card.data.id as string;
+    const recipients = await supabase
+      .from("thank_recipients")
+      .insert(toPersonIds.map((person_id) => ({ thanks_id: thanksId, person_id })));
+
+    if (recipients.error) {
+      // Never leave a card that names nobody.
+      await supabase.from("thanks").delete().eq("id", thanksId);
+      return { error: recipients.error.message };
+    }
+
+    return { id: thanksId };
+  }
+
+  if (!isMissingRecipientColumn(card.error)) {
+    return { error: card.error.message };
+  }
+
+  // Oldest shape: one row per recipient, which is what the board showed before
+  // recipients were grouped onto a single card.
+  const legacy = await supabase
+    .from("thanks")
+    .insert(
+      toPersonIds.map((to_person_id) => ({
+        from_person_id: fromPersonId,
+        to_person_id,
+        reason,
+        source,
+      }))
+    )
+    .select("id");
+
+  if (legacy.error) return { error: legacy.error.message };
+
+  const first = (legacy.data ?? [])[0]?.id as string | undefined;
+  if (!first) return { error: "Could not record the thanks." };
+
+  return { id: first };
+}
+
+function sortPeople(people: PersonSummary[]) {
+  return [...people].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function asPerson(
+  value: PersonSummary | PersonSummary[] | null | undefined
+): PersonSummary | null {
+  if (!value) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
+async function withRecipients(
+  supabase: BoardClient,
+  rows: ThanksCoreRow[]
+): Promise<ThanksWithPeople[]> {
+  const recipients = new Map<string, PersonSummary[]>();
+  const ids = rows.map((row) => row.id);
+
+  if (ids.length > 0) {
+    const grouped = await supabase
+      .from("thank_recipients")
+      .select(
+        "thanks_id, person:people!thank_recipients_person_id_fkey (id, name, avatar_url)"
+      )
+      .in("thanks_id", ids);
+
+    if (!grouped.error) {
+      for (const row of grouped.data ?? []) {
+        const person = asPerson(
+          (row as { person?: PersonSummary | PersonSummary[] | null }).person
+        );
+        if (!person) continue;
+        const thanksId = (row as { thanks_id: string }).thanks_id;
+        const list = recipients.get(thanksId) ?? [];
+        list.push(person);
+        recipients.set(thanksId, list);
+      }
+    } else {
+      const legacy = await supabase
+        .from("thanks")
+        .select("id, to_person:people!thanks_to_person_id_fkey (id, name, avatar_url)")
+        .in("id", ids);
+
+      if (!legacy.error) {
+        for (const row of legacy.data ?? []) {
+          const person = asPerson(
+            (row as { to_person?: PersonSummary | PersonSummary[] | null })
+              .to_person
+          );
+          if (person) {
+            recipients.set((row as { id: string }).id, [person]);
+          }
+        }
+      }
+    }
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    to_people: sortPeople(recipients.get(row.id) ?? []),
+  }));
+}
+
+/**
+ * Last-resort tally for a database where `people_with_stats` is missing or
+ * ungranted. PostgREST caps how many rows it will return, so counts here can
+ * undercount a very large board — restore the view rather than relying on this.
+ */
+async function withStats(
+  supabase: BoardClient,
+  people: Person[]
+): Promise<PersonWithStats[]> {
+  const received = new Map<string, number>();
+  const given = new Map<string, number>();
+
+  const givenRows = await supabase.from("thanks").select("from_person_id");
+  if (!givenRows.error) {
+    for (const row of givenRows.data ?? []) {
+      const id = (row as { from_person_id: string }).from_person_id;
+      given.set(id, (given.get(id) ?? 0) + 1);
+    }
+  }
+
+  const receivedRows = await supabase.from("thank_recipients").select("person_id");
+  if (!receivedRows.error) {
+    for (const row of receivedRows.data ?? []) {
+      const id = (row as { person_id: string }).person_id;
+      received.set(id, (received.get(id) ?? 0) + 1);
+    }
+  } else {
+    const legacy = await supabase.from("thanks").select("to_person_id");
+    if (!legacy.error) {
+      for (const row of legacy.data ?? []) {
+        const id = (row as { to_person_id?: string | null }).to_person_id;
+        if (!id) continue;
+        received.set(id, (received.get(id) ?? 0) + 1);
+      }
+    }
+  }
+
+  return people
+    .map((person) => ({
+      ...person,
+      thanks_received: received.get(person.id) ?? 0,
+      thanks_given: given.get(person.id) ?? 0,
+    }))
+    .sort(
+      (a, b) =>
+        b.thanks_received - a.thanks_received || a.name.localeCompare(b.name)
+    );
+}
 
 export const MAX_REASON_LENGTH = 500;
 
@@ -31,7 +256,7 @@ export async function listThanks(
   const supabase = createServerSupabase();
   let query = supabase
     .from("thanks")
-    .select(THANKS_SELECT)
+    .select(THANKS_CORE_SELECT)
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -44,7 +269,7 @@ export async function listThanks(
   const { data, error } = await query;
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as ThanksWithPeople[];
+  return withRecipients(supabase, (data ?? []) as unknown as ThanksCoreRow[]);
 }
 
 export async function getEarliestThanksAt(): Promise<string | null> {
@@ -60,23 +285,51 @@ export async function getEarliestThanksAt(): Promise<string | null> {
   return data?.created_at ?? null;
 }
 
+/**
+ * How many times each person was named on a card written in `range`.
+ *
+ * A card can name several people, so the tally comes from `thank_recipients`
+ * filtered by its card's `created_at`. Falls back to the pre-0004 shape, where
+ * the recipient lived on the card itself, so a database still waiting for
+ * `0004_group_thanks_recipients.sql` ranks the board instead of blanking it.
+ */
 export async function countThanksReceivedInRange(range: {
   start: Date;
   end: Date;
 }): Promise<Map<string, number>> {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
-    .from("thanks")
-    .select("to_person_id")
-    .gte("created_at", range.start.toISOString())
-    .lt("created_at", range.end.toISOString());
-
-  if (error) throw new Error(error.message);
+  const startedAt = range.start.toISOString();
+  const endedAt = range.end.toISOString();
 
   const counts = new Map<string, number>();
-  for (const row of data ?? []) {
-    const id = (row as { to_person_id: string }).to_person_id;
+  const tally = (id: string | null | undefined) => {
+    if (!id) return;
     counts.set(id, (counts.get(id) ?? 0) + 1);
+  };
+
+  const grouped = await supabase
+    .from("thank_recipients")
+    .select("person_id, thanks!thank_recipients_thanks_id_fkey!inner (created_at)")
+    .gte("thanks.created_at", startedAt)
+    .lt("thanks.created_at", endedAt);
+
+  if (!grouped.error) {
+    for (const row of grouped.data ?? []) {
+      tally((row as { person_id: string }).person_id);
+    }
+    return counts;
+  }
+
+  const legacy = await supabase
+    .from("thanks")
+    .select("to_person_id")
+    .gte("created_at", startedAt)
+    .lt("created_at", endedAt);
+
+  if (legacy.error) throw new Error(grouped.error.message);
+
+  for (const row of legacy.data ?? []) {
+    tally((row as { to_person_id?: string | null }).to_person_id);
   }
   return counts;
 }
@@ -85,36 +338,61 @@ export async function getThanks(id: string): Promise<ThanksWithPeople | null> {
   const supabase = createServerSupabase();
   const { data, error } = await supabase
     .from("thanks")
-    .select(THANKS_SELECT)
+    .select(THANKS_CORE_SELECT)
     .eq("id", id)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
-  return (data as ThanksWithPeople | null) ?? null;
+  if (!data) return null;
+  const [thanks] = await withRecipients(supabase, [
+    data as unknown as ThanksCoreRow,
+  ]);
+  return thanks ?? null;
 }
 
 export async function listPeople(): Promise<PersonWithStats[]> {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
+
+  // The view counts in Postgres, so it stays correct past the row cap
+  // PostgREST puts on the tallied-in-JS fallback below.
+  const view = await supabase
     .from("people_with_stats")
     .select("*")
     .order("thanks_received", { ascending: false })
     .order("name", { ascending: true });
 
+  if (!view.error) return (view.data ?? []) as PersonWithStats[];
+
+  const { data, error } = await supabase
+    .from("people")
+    .select("*")
+    .order("name", { ascending: true });
+
   if (error) throw new Error(error.message);
-  return (data ?? []) as PersonWithStats[];
+  return withStats(supabase, (data ?? []) as Person[]);
 }
 
 export async function getPerson(id: string): Promise<PersonWithStats | null> {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
+
+  const view = await supabase
     .from("people_with_stats")
     .select("*")
     .eq("id", id)
     .maybeSingle();
 
+  if (!view.error) return (view.data as PersonWithStats | null) ?? null;
+
+  const { data, error } = await supabase
+    .from("people")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
   if (error) throw new Error(error.message);
-  return (data as PersonWithStats | null) ?? null;
+  if (!data) return null;
+  const [person] = await withStats(supabase, [data as Person]);
+  return person ?? null;
 }
 
 export async function listThanksForPerson(personId: string): Promise<{
@@ -123,26 +401,50 @@ export async function listThanksForPerson(personId: string): Promise<{
 }> {
   const supabase = createServerSupabase();
 
-  const [received, given] = await Promise.all([
+  const [recipientRows, givenRows] = await Promise.all([
+    supabase
+      .from("thank_recipients")
+      .select("thanks_id")
+      .eq("person_id", personId),
     supabase
       .from("thanks")
-      .select(THANKS_SELECT)
-      .eq("to_person_id", personId)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("thanks")
-      .select(THANKS_SELECT)
+      .select(THANKS_CORE_SELECT)
       .eq("from_person_id", personId)
       .order("created_at", { ascending: false }),
   ]);
 
-  if (received.error) throw new Error(received.error.message);
-  if (given.error) throw new Error(given.error.message);
+  if (givenRows.error) throw new Error(givenRows.error.message);
 
-  return {
-    received: (received.data ?? []) as unknown as ThanksWithPeople[],
-    given: (given.data ?? []) as unknown as ThanksWithPeople[],
-  };
+  let receivedIds = (recipientRows.data ?? []).map(
+    (row) => (row as { thanks_id: string }).thanks_id
+  );
+  if (recipientRows.error) {
+    const legacy = await supabase
+      .from("thanks")
+      .select("id")
+      .eq("to_person_id", personId);
+    if (!legacy.error) {
+      receivedIds = (legacy.data ?? []).map((row) => row.id as string);
+    }
+  }
+
+  const received =
+    receivedIds.length === 0
+      ? { data: [] as unknown[], error: null }
+      : await supabase
+          .from("thanks")
+          .select(THANKS_CORE_SELECT)
+          .in("id", receivedIds)
+          .order("created_at", { ascending: false });
+
+  if (received.error) throw new Error(received.error.message);
+
+  const [receivedCards, givenCards] = await Promise.all([
+    withRecipients(supabase, (received.data ?? []) as unknown as ThanksCoreRow[]),
+    withRecipients(supabase, (givenRows.data ?? []) as unknown as ThanksCoreRow[]),
+  ]);
+
+  return { received: receivedCards, given: givenCards };
 }
 
 /**
@@ -228,7 +530,7 @@ export type CreateThanksResult =
   | { ok: false; status: number; error: string };
 
 export async function createThanks(input: {
-  toPersonId: string;
+  toPersonIds: string[];
   reason: string;
 }): Promise<CreateThanksResult> {
   const sender = await getCurrentPerson();
@@ -247,30 +549,32 @@ export async function createThanks(input: {
       error: `Keep it under ${MAX_REASON_LENGTH} characters.`,
     };
   }
-  if (!input.toPersonId) {
+  const toPersonIds = Array.from(new Set(input.toPersonIds.filter(Boolean)));
+  if (toPersonIds.length === 0) {
     return { ok: false, status: 400, error: "Pick who you want to thank." };
   }
-  if (!ALLOW_SELF_THANKS && input.toPersonId === sender.id) {
+  if (!ALLOW_SELF_THANKS && toPersonIds.includes(sender.id)) {
     return { ok: false, status: 400, error: "Pick a teammate other than yourself." };
   }
 
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
-    .from("thanks")
-    .insert({
-      from_person_id: sender.id,
-      to_person_id: input.toPersonId,
-      reason,
-      source: "web",
-    })
-    .select(THANKS_SELECT)
-    .single();
+  const written = await insertThanksCard(supabase, {
+    fromPersonId: sender.id,
+    toPersonIds,
+    reason,
+    source: "web",
+  });
 
-  if (error) {
-    return { ok: false, status: 400, error: error.message };
+  if ("error" in written) {
+    return { ok: false, status: 400, error: written.error };
   }
 
-  return { ok: true, thanks: data as unknown as ThanksWithPeople };
+  const thanks = await getThanks(written.id);
+  if (!thanks) {
+    return { ok: false, status: 500, error: "Could not load the new thanks." };
+  }
+
+  return { ok: true, thanks };
 }
 
 /**
@@ -354,7 +658,7 @@ export async function upsertPersonBySlackId(input: {
 /** Insert a thanks row from a verified Slack slash command. */
 export async function createSlackThanks(input: {
   fromPersonId: string;
-  toPersonId: string;
+  toPersonIds: string[];
   reason: string;
 }): Promise<CreateThanksResult> {
   const reason = emojifyText(input.reason.trim());
@@ -368,10 +672,11 @@ export async function createSlackThanks(input: {
       error: `Keep it under ${MAX_REASON_LENGTH} characters.`,
     };
   }
-  if (!input.toPersonId) {
+  const toPersonIds = Array.from(new Set(input.toPersonIds.filter(Boolean)));
+  if (toPersonIds.length === 0) {
     return { ok: false, status: 400, error: "Pick who you want to thank." };
   }
-  if (!ALLOW_SELF_THANKS && input.toPersonId === input.fromPersonId) {
+  if (!ALLOW_SELF_THANKS && toPersonIds.includes(input.fromPersonId)) {
     return {
       ok: false,
       status: 400,
@@ -380,20 +685,36 @@ export async function createSlackThanks(input: {
   }
 
   const supabase = createServiceSupabase();
-  const { data, error } = await supabase
-    .from("thanks")
-    .insert({
-      from_person_id: input.fromPersonId,
-      to_person_id: input.toPersonId,
-      reason,
-      source: "slack",
-    })
-    .select(THANKS_SELECT)
-    .single();
+  const written = await insertThanksCard(supabase, {
+    fromPersonId: input.fromPersonId,
+    toPersonIds,
+    reason,
+    source: "slack",
+  });
 
-  if (error) {
-    return { ok: false, status: 400, error: error.message };
+  if ("error" in written) {
+    return { ok: false, status: 400, error: written.error };
   }
 
-  return { ok: true, thanks: data as unknown as ThanksWithPeople };
+  const { data, error: selectError } = await supabase
+    .from("thanks")
+    .select(THANKS_CORE_SELECT)
+    .eq("id", written.id)
+    .maybeSingle();
+
+  if (selectError || !data) {
+    return {
+      ok: false,
+      status: 500,
+      error: selectError?.message ?? "Could not load the new thanks.",
+    };
+  }
+
+  const [thanks] = await withRecipients(supabase, [
+    data as unknown as ThanksCoreRow,
+  ]);
+  if (!thanks) {
+    return { ok: false, status: 500, error: "Could not load the new thanks." };
+  }
+  return { ok: true, thanks };
 }

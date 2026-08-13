@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
+import { getAuthUser } from "@/lib/auth";
 import { createThanks, listThanks } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  if (!(await getAuthUser())) {
+    return NextResponse.json(
+      { error: "Sign in to see the board." },
+      { status: 401 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const limit = Math.min(Number(searchParams.get("limit") ?? "50") || 50, 200);
 
@@ -41,20 +49,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const created = [];
-  for (const id of recipientIds) {
-    const result = await createThanks({ toPersonId: id, reason });
-    if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: result.status });
-    }
-    created.push(result.thanks);
+  const result = await createThanks({ toPersonIds: recipientIds, reason });
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
   return NextResponse.json(
-    {
-      thanks: created[0],
-      thanks_list: created,
-    },
+    { thanks: result.thanks },
     { status: 201 }
   );
 }

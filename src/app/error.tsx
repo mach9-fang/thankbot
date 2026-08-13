@@ -17,6 +17,12 @@ export default function Error({ error }: { error: Error }) {
           .
         </li>
         <li>
+          Apply <code className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-700">supabase/migrations/0004_group_thanks_recipients.sql</code>{" "}
+          and{" "}
+          <code className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-700">supabase/migrations/0005_reexpose_board_to_data_api.sql</code>{" "}
+          in the Supabase SQL editor if the board broke after grouping recipients onto one card.
+        </li>
+        <li>
           Run <code className="rounded bg-brand-50 px-1.5 py-0.5 text-brand-700">supabase/migrations/0001_init.sql</code>{" "}
           if the tables don&apos;t exist yet.
         </li>

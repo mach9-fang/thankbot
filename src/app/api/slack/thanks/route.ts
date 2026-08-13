@@ -5,9 +5,11 @@ import {
   createSlackThanks,
   upsertPersonBySlackId,
 } from "@/lib/db";
+import { formatNameList } from "@/lib/format";
 import { siteUrl } from "@/lib/supabase/env";
 import {
   fetchSlackUser,
+  formatMissingRecipientHint,
   formatSkippedRecipients,
   listChannelHumanMembers,
   listChannelMemberIds,
@@ -19,6 +21,7 @@ import {
   type ParsedThanksText,
   type SkippedRecipient,
   type SlackSlashPayload,
+  type SolePeerMiss,
 } from "@/lib/slack";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +58,7 @@ async function recordThanks(
   const { recipientIds: mentioned, handles, reason, channelWide } = parsed;
   const skipped: SkippedRecipient[] = [];
   let recipientIds: string[] = [];
+  let solePeerMiss: SolePeerMiss | null = null;
 
   if (channelWide) {
     const humans = await listChannelHumanMembers(
@@ -129,13 +133,19 @@ async function recordThanks(
       recipientIds.push(candidate.id);
     }
   } else {
-    const peerId = await resolveSoleChannelPeer(
+    const peer = await resolveSoleChannelPeer(
       slash.channel_id,
       slash.user_id,
-      botToken
+      botToken,
+      {
+        allowSelf: ALLOW_SELF_THANKS,
+        userToken: process.env.SLACK_USER_TOKEN,
+      }
     );
-    if (peerId) {
-      recipientIds = [peerId];
+    if (peer.peerId) {
+      recipientIds = [peer.peerId];
+    } else {
+      solePeerMiss = peer.miss;
     }
   }
 
@@ -143,7 +153,9 @@ async function recordThanks(
     const skipNote = formatSkippedRecipients(skipped);
     const hint = channelWide
       ? "I couldn't thank anyone in this conversation."
-      : "Tag who you're thanking: `/thanks @person for <reason>`. In a 1:1 DM with ThankBot you can omit the mention.";
+      : formatMissingRecipientHint(solePeerMiss, {
+          userTokenConfigured: Boolean(process.env.SLACK_USER_TOKEN),
+        });
 
     await postSlackResponse(
       slash.response_url,
@@ -171,8 +183,7 @@ async function recordThanks(
       email: senderSlack?.email ?? null,
     });
 
-    const created: Array<{ name: string; url: string }> = [];
-    let lastError: string | null = null;
+    const recipients: Array<{ id: string; name: string }> = [];
 
     for (const recipientId of recipientIds) {
       if (!ALLOW_SELF_THANKS && recipientId === slash.user_id) {
@@ -199,28 +210,15 @@ async function recordThanks(
         email: recipientSlack.email ?? null,
       });
 
-      const result = await createSlackThanks({
-        fromPersonId: sender.id,
-        toPersonId: recipient.id,
-        reason,
-      });
-
-      if (result.ok) {
-        created.push({
-          name: recipient.name,
-          url: `${siteUrl()}/thanks/${result.thanks.id}`,
-        });
-      } else {
-        lastError = result.error;
-      }
+      recipients.push({ id: recipient.id, name: recipient.name });
     }
 
     const skipNote = formatSkippedRecipients(skipped);
 
-    if (created.length === 0) {
+    if (recipients.length === 0) {
       await postSlackResponse(
         slash.response_url,
-        [lastError ?? "Couldn't record those thanks.", skipNote]
+        ["Couldn't record those thanks.", skipNote]
           .filter(Boolean)
           .join(" "),
         false
@@ -228,13 +226,26 @@ async function recordThanks(
       return;
     }
 
-    const receivedNames = created.map(({ name }) => `*${name}*`).join(", ");
-    const header = `:pray: ${sender.name} thanked ${receivedNames}: ${reason}`;
-    const detailLines = created.map(
-      ({ name, url }) => `• *${name}* — ${url}`
-    );
+    const result = await createSlackThanks({
+      fromPersonId: sender.id,
+      toPersonIds: recipients.map(({ id }) => id),
+      reason,
+    });
 
-    const body = [header, ...detailLines].join("\n");
+    if (!result.ok) {
+      await postSlackResponse(
+        slash.response_url,
+        [result.error, skipNote].filter(Boolean).join(" "),
+        false
+      );
+      return;
+    }
+
+    const receivedNames = formatNameList(
+      recipients.map(({ name }) => `*${name}*`)
+    );
+    const url = `${siteUrl()}/thanks/${result.thanks.id}`;
+    const body = `:pray: ${sender.name} thanked ${receivedNames}: ${reason} — <${url}|View card>`;
 
     await postSlackResponse(slash.response_url, body);
 
@@ -308,7 +319,7 @@ export async function POST(request: Request) {
         "Try: `/thanks @person for helping with the launch`",
         "Or thank several people: `/thanks @alice @bob for shipping it`",
         "In a channel: `/thanks everyone for the hard work`",
-        "In a 1:1 DM with ThankBot: `/thanks for covering standup`",
+        "Where ThankBot sees just one teammate: `/thanks for covering standup`",
       ].join("\n"),
       false
     );

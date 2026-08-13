@@ -2,9 +2,9 @@ import { Leaderboard } from "@/components/Leaderboard";
 import { ThanksCard } from "@/components/ThanksCard";
 import { ThanksForm } from "@/components/ThanksForm";
 import { TimeRangeSelector } from "@/components/TimeRangeSelector";
+import { requireCurrentPerson } from "@/lib/auth";
 import {
   countThanksReceivedInRange,
-  getCurrentPerson,
   getEarliestThanksAt,
   listPeople,
   listThanks,
@@ -20,18 +20,17 @@ export const dynamic = "force-dynamic";
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: { error?: string; period?: string; range?: string };
+  searchParams: { period?: string; range?: string };
 }) {
+  const currentPerson = await requireCurrentPerson();
   const selectedRange = parseTimeRangeParams(searchParams);
 
-  const [thanks, people, currentPerson, earliestThanksAt, receivedCounts] =
-    await Promise.all([
-      listThanks(50, selectedRange),
-      listPeople(),
-      getCurrentPerson(),
-      getEarliestThanksAt(),
-      countThanksReceivedInRange(selectedRange),
-    ]);
+  const [thanks, people, earliestThanksAt, receivedCounts] = await Promise.all([
+    listThanks(50, selectedRange),
+    listPeople(),
+    getEarliestThanksAt(),
+    countThanksReceivedInRange(selectedRange),
+  ]);
 
   const periodOptions = listPeriodOptions(
     selectedRange.kind,
@@ -40,6 +39,8 @@ export default async function HomePage({
   );
   const currentKey = currentRange(selectedRange.kind).key;
 
+  // The leaderboard answers "who was thanked in this period", so it ranks on the
+  // period's tally rather than the all-time count carried by `people`.
   const rankedPeople = people
     .map((person) => ({
       ...person,
@@ -50,10 +51,7 @@ export default async function HomePage({
         b.thanks_received - a.thanks_received || a.name.localeCompare(b.name)
     );
 
-  const totalThanks = people.reduce(
-    (sum, person) => sum + person.thanks_received,
-    0
-  );
+  const boardIsEmpty = earliestThanksAt === null;
 
   return (
     <div className="space-y-6">
@@ -69,9 +67,9 @@ export default async function HomePage({
         <div className="flex items-center gap-6 sm:gap-8">
           <div className="text-right">
             <p className="text-2xl font-semibold tabular-nums text-brand-700">
-              {totalThanks}
+              {thanks.length}
             </p>
-            <p className="text-xs text-ink-500">recent thanks</p>
+            <p className="text-xs text-ink-500">thanks this period</p>
           </div>
           <div className="h-8 w-px bg-brand-100" aria-hidden />
           <div className="text-right">
@@ -82,12 +80,6 @@ export default async function HomePage({
           </div>
         </div>
       </section>
-
-      {searchParams.error ? (
-        <p className="rounded-2xl border border-heart-200 bg-heart-50 px-4 py-3 text-sm text-heart-700">
-          {searchParams.error}
-        </p>
-      ) : null}
 
       <ThanksForm currentPerson={currentPerson} people={people} />
 
@@ -111,7 +103,7 @@ export default async function HomePage({
             </h2>
             {thanks.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-ink-200 bg-white/60 p-10 text-center text-ink-500">
-                {totalThanks === 0
+                {boardIsEmpty
                   ? "No thanks yet. Send the first one above to get the board started."
                   : `No thanks in ${selectedRange.label}. Send one above to get this period started.`}
               </div>
@@ -131,7 +123,7 @@ export default async function HomePage({
             <Leaderboard
               people={rankedPeople}
               emptyMessage={
-                totalThanks === 0
+                boardIsEmpty
                   ? "No thanks yet — send the first one to start the leaderboard."
                   : `No thanks in ${selectedRange.label} — send one to start the leaderboard.`
               }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { ThanksCard } from "@/components/ThanksCard";
+import { requireAuthUser } from "@/lib/auth";
 import { getPerson, listThanksForPerson } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,8 @@ export default async function PersonPage({
 }: {
   params: { id: string };
 }) {
+  await requireAuthUser(`/people/${params.id}`);
+
   const person = await getPerson(params.id);
   if (!person) {
     notFound();

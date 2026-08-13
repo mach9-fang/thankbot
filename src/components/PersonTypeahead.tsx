@@ -8,6 +8,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import { readRecipientList } from "@/lib/recipient-list";
 import type { PersonSummary } from "@/lib/types";
 import { Avatar } from "./Avatar";
 
@@ -71,6 +72,19 @@ export function PersonTypeahead({
     setQuery("");
     setOpen(true);
     inputRef.current?.focus();
+  }
+
+  /** A separator finishes the name before it, so a list becomes chips. */
+  function handleInput(value: string) {
+    setOpen(true);
+
+    const { matched, rest } = readRecipientList(
+      value,
+      people.filter((person) => !selectedIds.has(person.id))
+    );
+
+    if (matched.length > 0) onChange([...selected, ...matched]);
+    setQuery(rest);
   }
 
   function removePerson(id: string) {
@@ -164,10 +178,7 @@ export function PersonTypeahead({
               ? `${listId}-option-${matches[activeIndex].id}`
               : undefined
           }
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setOpen(true);
-          }}
+          onChange={(event) => handleInput(event.target.value)}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
           className="min-w-[8rem] flex-1 bg-transparent py-1 text-sm text-ink-900 outline-none placeholder:text-ink-400"

@@ -2,9 +2,12 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
+import { ConfettiOnOpen } from "@/components/ConfettiOnOpen";
 import { formatThanksWhen } from "@/components/ThanksCard";
+import { requireAuthUser } from "@/lib/auth";
 import { getThanks } from "@/lib/db";
 import { emojifyText } from "@/lib/emoji";
+import { formatNameList } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +22,9 @@ export async function generateMetadata({
   }
 
   return {
-    title: `${thanks.from_person.name} thanked ${thanks.to_person.name} — ThankBot`,
+    title: `${thanks.from_person.name} thanked ${formatNameList(
+      thanks.to_people.map((person) => person.name)
+    )} — ThankBot`,
     description: emojifyText(thanks.reason),
   };
 }
@@ -29,6 +34,8 @@ export default async function ThanksPage({
 }: {
   params: { id: string };
 }) {
+  await requireAuthUser(`/thanks/${params.id}`);
+
   const thanks = await getThanks(params.id);
   if (!thanks) {
     notFound();
@@ -38,6 +45,7 @@ export default async function ThanksPage({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      <ConfettiOnOpen />
       <Link
         href="/"
         className="inline-flex items-center gap-1 text-sm text-ink-500 transition hover:text-brand-700"
@@ -74,20 +82,25 @@ export default async function ThanksPage({
               <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
             </svg>
 
-            <Link
-              href={`/people/${thanks.to_person.id}`}
-              className="flex items-center gap-3 rounded-2xl transition hover:opacity-90"
-            >
-              <Avatar person={thanks.to_person} size="lg" />
-              <div>
-                <p className="text-xs uppercase tracking-wide text-brand-200">
-                  To
-                </p>
-                <p className="font-[family-name:var(--font-display)] text-lg font-semibold text-white">
-                  {thanks.to_person.name}
-                </p>
+            <div>
+              <p className="text-xs uppercase tracking-wide text-brand-200">
+                To
+              </p>
+              <div className="mt-1 flex flex-wrap gap-x-5 gap-y-3">
+                {thanks.to_people.map((person) => (
+                  <Link
+                    key={person.id}
+                    href={`/people/${person.id}`}
+                    className="flex items-center gap-3 rounded-2xl transition hover:opacity-90"
+                  >
+                    <Avatar person={person} size="lg" />
+                    <p className="font-[family-name:var(--font-display)] text-lg font-semibold text-white">
+                      {person.name}
+                    </p>
+                  </Link>
+                ))}
               </div>
-            </Link>
+            </div>
           </div>
         </div>
 
