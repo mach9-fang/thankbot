@@ -54,21 +54,30 @@ export function ConfettiOnOpen() {
       };
 
       function fire(opts: Options) {
+        const scalar = opts.scalar ?? 1;
+        const count = opts.particleCount ?? 50;
+
         void confetti({
           ...defaults,
-          shapes: ["square", "circle", "square", "circle", "star"],
+          shapes: ["square", "circle"],
           ...opts,
+          scalar,
+          particleCount: Math.round(count * 0.5),
         });
-        // Path hearts need a bit more scale to sit next to built-in stars.
         void confetti({
           ...defaults,
           ...opts,
-          shapes: [heart, "star"],
-          scalar: (opts.scalar ?? 1) * 1.7,
-          particleCount: Math.max(
-            8,
-            Math.round((opts.particleCount ?? 50) * 0.4)
-          ),
+          shapes: ["star"],
+          scalar: scalar * 0.6,
+          particleCount: Math.round(count * 0.25),
+        });
+        // Path hearts render smaller than squares; 1.7 matches the previous size, then +20%.
+        void confetti({
+          ...defaults,
+          ...opts,
+          shapes: [heart],
+          scalar: scalar * 1.7 * 1.2,
+          particleCount: Math.round(count * 0.25),
         });
       }
 

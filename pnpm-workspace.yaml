@@ -1,3 +1,5 @@
 allowBuilds:
   esbuild: true
   unrs-resolver: true
+patchedDependencies:
+  canvas-confetti@1.9.4: patches/canvas-confetti@1.9.4.patch
