@@ -78,11 +78,9 @@ begin
   end if;
 end $$;
 
-drop view if exists public.people_with_stats;
-drop index if exists public.thanks_to_person_idx;
-alter table public.thanks drop column if exists to_person_id;
-
-create view public.people_with_stats
+-- Replace the view *before* dropping to_person_id so we never DROP VIEW
+-- (which discards PostgREST grants and blanks the board).
+create or replace view public.people_with_stats
 with (security_invoker = true) as
 select
   p.*,
@@ -97,6 +95,9 @@ select
     where t.from_person_id = p.id
   )::int as thanks_given
 from public.people p;
+
+drop index if exists public.thanks_to_person_idx;
+alter table public.thanks drop column if exists to_person_id;
 
 alter table public.thank_recipients enable row level security;
 
