@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   canvas-confetti@1.9.4:
-    hash: 99d1ee0c56dc4b6d05ec8f3aaf6f6aed38d6696eb772ae7744a18d050905ddb8
+    hash: bb45a78f0f4007699bfff8244d7a71f33b91339973485e7307108700fed9883c
     path: patches/canvas-confetti@1.9.4.patch
 
 importers:
@@ -24,7 +24,7 @@ importers:
         version: 3.7.6
       canvas-confetti:
         specifier: ^1.9.4
-        version: 1.9.4(patch_hash=99d1ee0c56dc4b6d05ec8f3aaf6f6aed38d6696eb772ae7744a18d050905ddb8)
+        version: 1.9.4(patch_hash=bb45a78f0f4007699bfff8244d7a71f33b91339973485e7307108700fed9883c)
       emoji-toolkit:
         specifier: ^10.0.0
         version: 10.0.0
@@ -2718,7 +2718,7 @@ snapshots:
 
   caniuse-lite@1.0.30001806: {}
 
-  canvas-confetti@1.9.4(patch_hash=99d1ee0c56dc4b6d05ec8f3aaf6f6aed38d6696eb772ae7744a18d050905ddb8): {}
+  canvas-confetti@1.9.4(patch_hash=bb45a78f0f4007699bfff8244d7a71f33b91339973485e7307108700fed9883c): {}
 
   chalk@4.1.2:
     dependencies:

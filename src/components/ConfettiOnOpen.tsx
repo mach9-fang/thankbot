@@ -51,6 +51,8 @@ export function ConfettiOnOpen() {
       const defaults: Options = {
         colors: COLORS,
         disableForReducedMotion: true,
+        ticks: 100,
+        gravity: 1.2,
       };
 
       function fire(opts: Options) {
