@@ -10,6 +10,11 @@ export const PUBLIC_PATHS = [
   "/auth/signin",
   "/auth/callback",
   "/auth/signout",
+  // Slack authenticates with its signing secret, not Google. Middleware also
+  // skips `/api/slack` in its matcher so the session lookup does not eat into
+  // Slack's 3 second budget; this entry is the documented hole if that matcher
+  // ever changes.
+  "/api/slack",
 ];
 
 export function isPublicPath(pathname: string): boolean {
