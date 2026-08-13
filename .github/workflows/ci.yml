@@ -1,0 +1,58 @@
+name: CI
+
+# ThankBot is deployed by Vercel, not from here. This workflow only has to say
+# whether main is healthy, so a red badge means something again — it replaces a
+# GitHub Pages deploy that could never work (the app is entirely dynamic: server
+# components read cookies, and `/api/*` and the Slack command are route
+# handlers) and so had failed on every push.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # `next build` reaches for Supabase config while prerendering the few
+      # static routes. Nothing here is contacted, so placeholders keep the
+      # build honest without putting project credentials in CI.
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_placeholder
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      # Type errors surface here: `next build` type-checks the whole project.
+      - name: Build
+        run: pnpm build
+
+      # The rest of the suite (scripts/test-slack-dm-flow.ts,
+      # test-slack-multi-recipient.ts, test-thanks-write-paths.ts) drives a real
+      # database. Run those locally against `supabase start` — see README.
+      - name: Test (no database required)
+        run: |
+          pnpm tsx scripts/test-parse.ts
+          pnpm tsx scripts/test-recipient-list.ts
+          pnpm tsx scripts/test-slack-recipients.ts
