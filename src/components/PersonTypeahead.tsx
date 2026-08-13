@@ -74,8 +74,7 @@ export function PersonTypeahead({
     inputRef.current?.focus();
   }
 
-  /** A separator finishes the name in front of it, so a typed or pasted list
-   * becomes chips. */
+  /** A separator finishes the name before it, so a list becomes chips. */
   function handleInput(value: string) {
     setOpen(true);
 

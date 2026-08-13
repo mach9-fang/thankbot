@@ -96,7 +96,9 @@ export function parseThanksText(text: string): ParsedThanksText {
       return SLOT;
     });
 
-  working = working.replace(RECIPIENT_RUN_PATTERN, SLOT).replace(ADDRESS_PATTERN, "");
+  working = working
+    .replace(RECIPIENT_RUN_PATTERN, SLOT)
+    .replace(ADDRESS_PATTERN, "");
 
   if (!channelWide && recipientIds.length === 0 && handles.length === 0) {
     const keyword = working.match(CHANNEL_WIDE_PATTERN);
@@ -121,7 +123,7 @@ function readReason(working: string): string {
   return (
     working
       .replace(RECIPIENT_PREFIX_PATTERN, "")
-      // A name mentioned mid-sentence still reads as part of the reason.
+      // A name dropped into the middle of a sentence leaves the sentence.
       .replace(new RegExp(SLOT, "g"), " ")
       .replace(/\s+([,.;:!?])/g, "$1")
       .replace(/\s+/g, " ")
