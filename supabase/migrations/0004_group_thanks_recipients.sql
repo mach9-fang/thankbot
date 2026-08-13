@@ -100,9 +100,13 @@ from public.people p;
 
 alter table public.thank_recipients enable row level security;
 
+-- Same privacy as people/thanks: the board is for signed-in visitors. Slack
+-- posting does not use these policies; it goes through the service-role RPC.
 drop policy if exists "thank recipients are readable" on public.thank_recipients;
-create policy "thank recipients are readable"
+drop policy if exists "signed-in users read thank recipients" on public.thank_recipients;
+create policy "signed-in users read thank recipients"
   on public.thank_recipients for select
+  to authenticated
   using (true);
 
 drop policy if exists "signed-in users add recipients to their thanks" on public.thank_recipients;
@@ -121,6 +125,10 @@ create policy "signed-in users add recipients to their thanks"
 
 -- Both inserts run in the RPC's transaction, so a card can never be left with
 -- only some of its intended recipients.
+--
+-- SECURITY DEFINER is the Slack hole: /thanks has no Google session, so it
+-- cannot satisfy the authenticated insert policies. The website still requires
+-- a signed-in user (source=web). Slack and seed must present the service role.
 create or replace function public.create_thanks_card(
   p_from_person_id uuid,
   p_to_person_ids uuid[],
@@ -129,14 +137,28 @@ create or replace function public.create_thanks_card(
 )
 returns uuid
 language plpgsql
-security invoker
+security definer
 set search_path = public
 as $$
 declare
   v_thanks_id uuid;
+  v_role text := coalesce(auth.role(), '');
 begin
   if coalesce(cardinality(p_to_person_ids), 0) = 0 then
     raise exception 'Pick at least one teammate to thank.';
+  end if;
+
+  if p_source = 'web' then
+    if v_role is distinct from 'authenticated'
+       or p_from_person_id is distinct from public.current_person_id() then
+      raise exception 'Sign in with Google to say thanks.';
+    end if;
+  elsif p_source in ('slack', 'seed') then
+    if v_role is distinct from 'service_role' then
+      raise exception 'Slack thanks must be recorded with the service role.';
+    end if;
+  else
+    raise exception 'Unknown thanks source.';
   end if;
 
   insert into public.thanks (from_person_id, reason, source)
@@ -155,11 +177,13 @@ $$;
 
 -- Hosted Supabase no longer auto-exposes new public objects to the Data API
 -- roles. Without EXECUTE, PostgREST omits this RPC from its schema cache and
--- Slack/web writes fail with PGRST202 ("Could not find the function
--- public.create_thanks_card ... in the schema cache").
+-- writes fail with PGRST202. Grant it only to the roles that may call it:
+-- signed-in website users, and the service role Slack/seed use.
 grant all on table public.thank_recipients to anon, authenticated, service_role;
 grant select on public.people_with_stats to anon, authenticated, service_role;
+revoke all on function public.create_thanks_card(uuid, uuid[], text, text)
+  from public, anon;
 grant execute on function public.create_thanks_card(uuid, uuid[], text, text)
-  to anon, authenticated, service_role;
+  to authenticated, service_role;
 
 notify pgrst, 'reload schema';

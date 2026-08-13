@@ -20,3 +20,10 @@ alter default privileges in schema public
   grant all on sequences to anon, authenticated, service_role;
 alter default privileges in schema public
   grant all on routines to anon, authenticated, service_role;
+
+-- Website thanks need a Google session; Slack/seed use the service role.
+-- The blanket routine grant above would otherwise let the anon key call it.
+revoke all on function public.create_thanks_card(uuid, uuid[], text, text)
+  from public, anon;
+grant execute on function public.create_thanks_card(uuid, uuid[], text, text)
+  to authenticated, service_role;
