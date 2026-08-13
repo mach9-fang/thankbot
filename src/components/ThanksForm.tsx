@@ -55,28 +55,15 @@ export function ThanksForm({
       const payload = (await response.json()) as {
         error?: string;
         thanks?: { id: string };
-        thanks_list?: { id: string }[];
       };
 
-      const created =
-        payload.thanks_list ?? (payload.thanks ? [payload.thanks] : []);
-
-      if (!response.ok || created.length === 0) {
+      if (!response.ok || !payload.thanks) {
         setError(payload.error ?? "Could not send that thanks.");
         setStatus("idle");
         return;
       }
 
-      if (created.length === 1) {
-        router.push(`/thanks/${created[0].id}`);
-        return;
-      }
-
-      setRecipients([]);
-      setReason("");
-      setStatus("idle");
-      router.push("/");
-      router.refresh();
+      router.push(`/thanks/${payload.thanks.id}`);
     } catch {
       setError("Network error — try again.");
       setStatus("idle");

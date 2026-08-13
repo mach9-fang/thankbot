@@ -27,9 +27,36 @@ export type SkippedRecipient = {
   reason: "not_found" | "not_present" | "self";
 };
 
-const CHANNEL_WIDE_PATTERN =
-  /^(?:all|everyone|everybody|every\s+body)(?=\s|$)/i;
+/** Stands in for a recipient while the rest of the text is tidied up. */
+const SLOT = "\u0000";
+
+/**
+ * What people put between names: commas, semicolons, slashes, ampersands,
+ * plus signs, "and" (with or without an Oxford comma), or nothing but a space.
+ */
+const BETWEEN_RECIPIENTS = String.raw`[\s,;&+/]*(?:(?:and|plus)[\s,;&+/]*)?`;
+
+// Slack IDs are typically like U123ABCDEF; allow underscores for local/demo IDs too
+const MENTION_PATTERN = /<@([A-Z0-9_]+)(?:\|[^>]+)?>/gi;
 const SPECIAL_EVERYONE_PATTERN = /<!(?:everyone|channel)(?:\|[^>]+)?>/gi;
+// A handle never follows a word character, so "me@example.com" stays reason text.
+const HANDLE_PATTERN = /(?<![\w.%+-])@([A-Za-z0-9._'-]+)/g;
+const CHANNEL_WIDE = String.raw`(?:all|everyone|everybody|every\s+body)(?![\w'-])`;
+const CHANNEL_WIDE_PATTERN = new RegExp(`^${CHANNEL_WIDE}`, "i");
+
+const RECIPIENT_RUN_PATTERN = new RegExp(
+  `${SLOT}(?:${BETWEEN_RECIPIENTS}${SLOT})+`,
+  "g"
+);
+/** "thanks to @alice …" — how the list was addressed, not why. */
+const ADDRESS_PATTERN = new RegExp(
+  `^\\s*(?:(?:thanks|thank\\s+you|thx|ty)\\b[\\s:,-]*)?(?:to\\b[\\s:,-]*)?(?=${SLOT}|${CHANNEL_WIDE})`,
+  "i"
+);
+/** The names, plus whatever punctuation introduced the reason after them. */
+const RECIPIENT_PREFIX_PATTERN = new RegExp(
+  `^\\s*${SLOT}\\s*[,;:.!?—–-]*\\s*`
+);
 
 /**
  * Parse `/thanks @alice @bob for shipping the release`.
@@ -38,52 +65,75 @@ const SPECIAL_EVERYONE_PATTERN = /<!(?:everyone|channel)(?:\|[^>]+)?>/gi;
  * channels, users, and links" turned on. Otherwise mentions arrive as plain
  * `@alice` text, so those handles come back separately for name lookup.
  *
+ * Recipients can be listed however they were typed — `@alice @bob`,
+ * `@alice, @bob`, `@alice, @bob, and @carol`, `@alice; @bob`, `@alice & @bob`
+ * — and the separators are dropped rather than left at the front of the
+ * reason. Only separators sitting between two names are removed, so an "and"
+ * or a comma inside the reason itself survives.
+ *
  * Channel-wide forms: `/thanks everyone for …`, `/thanks all for …`,
  * `/thanks every body for …`, or Slack's `<!everyone>` / `<!channel>`.
  */
 export function parseThanksText(text: string): ParsedThanksText {
-  // Slack IDs are typically like U123ABCDEF; allow underscores for local/demo IDs too
-  const mentionPattern = /<@([A-Z0-9_]+)(?:\|[^>]+)?>/gi;
   const recipientIds: string[] = [];
-  let match: RegExpExecArray | null;
-
-  while ((match = mentionPattern.exec(text)) !== null) {
-    recipientIds.push(match[1]);
-  }
-
-  const hasSpecialEveryone = SPECIAL_EVERYONE_PATTERN.test(text);
-  SPECIAL_EVERYONE_PATTERN.lastIndex = 0;
-
-  let withoutEscaped = text
-    .replace(/<@([A-Z0-9_]+)(?:\|[^>]+)?>/gi, " ")
-    .replace(SPECIAL_EVERYONE_PATTERN, " ");
-
-  const handlePattern = /(?:^|\s)@([A-Za-z0-9._'-]+)/g;
   const handles: string[] = [];
-  while ((match = handlePattern.exec(withoutEscaped)) !== null) {
-    handles.push(match[1]);
-  }
+  let channelWide = false;
 
-  withoutEscaped = withoutEscaped
-    .replace(/(?:^|\s)@[A-Za-z0-9._'-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  let working = text
+    .replace(MENTION_PATTERN, (_match, id: string) => {
+      addUnique(recipientIds, id);
+      return SLOT;
+    })
+    .replace(SPECIAL_EVERYONE_PATTERN, () => {
+      channelWide = true;
+      return SLOT;
+    })
+    .replace(HANDLE_PATTERN, (match: string, handle: string) => {
+      // "@bob." ends a sentence; the trailing punctuation isn't part of a name.
+      const trimmed = handle.replace(/[._'-]+$/, "");
+      if (!trimmed) return match;
+      addUnique(handles, trimmed);
+      return SLOT;
+    });
 
-  let channelWide = hasSpecialEveryone;
-  let reason = withoutEscaped;
+  working = working
+    .replace(RECIPIENT_RUN_PATTERN, SLOT)
+    .replace(ADDRESS_PATTERN, "");
 
   if (!channelWide && recipientIds.length === 0 && handles.length === 0) {
-    const channelWideMatch = withoutEscaped.match(CHANNEL_WIDE_PATTERN);
-    if (channelWideMatch) {
+    const keyword = working.match(CHANNEL_WIDE_PATTERN);
+    if (keyword) {
       channelWide = true;
-      reason = withoutEscaped.slice(channelWideMatch[0].length).trim();
+      working = SLOT + working.slice(keyword[0].length);
     }
   }
 
-  // Drop a leading "for" if present: "/thanks @bob for helping"
-  reason = reason.replace(/^for\s+/i, "").trim();
+  return { recipientIds, handles, reason: readReason(working), channelWide };
+}
 
-  return { recipientIds, handles, reason, channelWide };
+function addUnique(values: string[], value: string) {
+  if (values.some((existing) => existing.toLowerCase() === value.toLowerCase())) {
+    return;
+  }
+  values.push(value);
+}
+
+/** Whatever is left once the recipient list has been lifted out of the text. */
+function readReason(working: string): string {
+  return (
+    working
+      .replace(RECIPIENT_PREFIX_PATTERN, "")
+      // A name dropped into the middle of a sentence leaves the sentence.
+      .replace(new RegExp(SLOT, "g"), " ")
+      .replace(/\s+([,.;:!?])/g, "$1")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^[,;:&+/-]+\s*/, "")
+      // "/thanks @bob for helping" reads as "Bob — helping".
+      .replace(/^for\s+/i, "")
+      .replace(/[\s,;:&+/]+$/, "")
+      .trim()
+  );
 }
 
 export function verifySlackRequest(

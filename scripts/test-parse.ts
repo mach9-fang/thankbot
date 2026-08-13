@@ -68,6 +68,107 @@ assert.strictEqual(mentionNotChannelWide.channelWide, false);
 assert.deepStrictEqual(mentionNotChannelWide.recipientIds, ["U111"]);
 assert.strictEqual(mentionNotChannelWide.reason, "telling everyone the plan");
 
+// However the recipients are separated, only the names come out of the text —
+// the separators must never end up at the front of the reason.
+const separatorForms: Array<[string, string]> = [
+  ["@alice @bob @carol", "spaces"],
+  ["@alice, @bob, @carol", "commas"],
+  ["@alice,@bob,@carol", "commas without spaces"],
+  ["@alice, @bob, and @carol", "Oxford comma"],
+  ["@alice, @bob and @carol", "comma then and"],
+  ["@alice and @bob and @carol", "repeated and"],
+  ["@alice; @bob; @carol", "semicolons"],
+  ["@alice & @bob & @carol", "ampersands"],
+  ["@alice + @bob + @carol", "plus signs"],
+  ["@alice / @bob / @carol", "slashes"],
+  ["@alice,  @bob,and @carol", "ragged spacing"],
+];
+
+for (const [recipients, label] of separatorForms) {
+  const parsed = parseThanksText(`${recipients} for joining the standup`);
+  assert.deepStrictEqual(parsed.handles, ["alice", "bob", "carol"], label);
+  assert.strictEqual(parsed.reason, "joining the standup", label);
+  assert.strictEqual(parsed.channelWide, false, label);
+
+  // The same list of escaped mentions Slack sends when it escapes users.
+  const escaped = parseThanksText(
+    `${recipients.replace(/@alice/, "<@U111>").replace(/@bob/, "<@U222>").replace(/@carol/, "<@U333>")} for joining the standup`
+  );
+  assert.deepStrictEqual(escaped.recipientIds, ["U111", "U222", "U333"], label);
+  assert.strictEqual(escaped.reason, "joining the standup", label);
+}
+
+// Escaped and plain mentions can be mixed in one list.
+const mixedForms = parseThanksText("<@U111>, @bob, and @carol for the launch");
+assert.deepStrictEqual(mixedForms.recipientIds, ["U111"]);
+assert.deepStrictEqual(mixedForms.handles, ["bob", "carol"]);
+assert.strictEqual(mixedForms.reason, "the launch");
+
+// Reasons introduced by punctuation instead of "for".
+const colonReason = parseThanksText("@alice; @bob: shipped the release");
+assert.deepStrictEqual(colonReason.handles, ["alice", "bob"]);
+assert.strictEqual(colonReason.reason, "shipped the release");
+
+const dashReason = parseThanksText("<@U111>, <@U222> — covering on-call");
+assert.strictEqual(dashReason.reason, "covering on-call");
+
+// "to" and a repeated "thanks" address the list; they aren't the reason.
+for (const address of ["to", "thanks to", "thanks", "thank you to"]) {
+  const addressed = parseThanksText(`${address} @alice and @bob for the launch`);
+  assert.deepStrictEqual(addressed.handles, ["alice", "bob"], address);
+  assert.strictEqual(addressed.reason, "the launch", address);
+}
+
+const addressedChannel = parseThanksText("thanks to everyone for the launch");
+assert.strictEqual(addressedChannel.channelWide, true);
+assert.strictEqual(addressedChannel.reason, "the launch");
+
+// A reason may still open with "thanks" once the names are out of the way.
+const politeReason = parseThanksText("@alice thanks for the coffee");
+assert.deepStrictEqual(politeReason.handles, ["alice"]);
+assert.strictEqual(politeReason.reason, "thanks for the coffee");
+
+// Separators inside the reason itself are left alone.
+const reasonWithAnd = parseThanksText(
+  "@alice and @bob for shipping the docs, the demo, and the launch"
+);
+assert.deepStrictEqual(reasonWithAnd.handles, ["alice", "bob"]);
+assert.strictEqual(
+  reasonWithAnd.reason,
+  "shipping the docs, the demo, and the launch"
+);
+
+// A name dropped into the middle of a sentence still reads as a sentence.
+const inlineMention = parseThanksText("@alice for pairing with @bob on the fix");
+assert.deepStrictEqual(inlineMention.handles, ["alice", "bob"]);
+assert.strictEqual(inlineMention.reason, "pairing with on the fix");
+
+// A repeated name is one recipient.
+const repeated = parseThanksText("<@U111>, <@U111> and @Bob, @bob for the fix");
+assert.deepStrictEqual(repeated.recipientIds, ["U111"]);
+assert.deepStrictEqual(repeated.handles, ["Bob"]);
+assert.strictEqual(repeated.reason, "the fix");
+
+// A list with no reason yields no reason, not a pile of punctuation.
+const noReason = parseThanksText("@alice, @bob, and @carol");
+assert.deepStrictEqual(noReason.handles, ["alice", "bob", "carol"]);
+assert.strictEqual(noReason.reason, "");
+
+// Trailing punctuation belongs to the sentence, not the handle.
+const sentence = parseThanksText("thanks @alice, @bob. Great launch!");
+assert.deepStrictEqual(sentence.handles, ["alice", "bob"]);
+assert.strictEqual(sentence.reason, "Great launch!");
+
+// Channel-wide keywords tolerate the punctuation people type after them.
+const everyoneComma = parseThanksText("everyone, for joining the standup");
+assert.strictEqual(everyoneComma.channelWide, true);
+assert.strictEqual(everyoneComma.reason, "joining the standup");
+
+// "all" inside a reason is a word, not a channel-wide request.
+const allInReason = parseThanksText("@alice for doing all the prep work");
+assert.strictEqual(allInReason.channelWide, false);
+assert.strictEqual(allInReason.reason, "doing all the prep work");
+
 const skippedNote = formatSkippedRecipients([
   { label: "@ghost", reason: "not_found" },
   { label: "*Bob*", reason: "not_present" },
