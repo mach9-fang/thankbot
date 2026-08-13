@@ -4,7 +4,7 @@ import { Avatar } from "@/components/Avatar";
 import { SignOutButton } from "@/components/SignOutButton";
 import { ThanksCard } from "@/components/ThanksCard";
 import { requireAuthUser } from "@/lib/auth";
-import { getCurrentPerson, getPerson, listThanksForPerson } from "@/lib/db";
+import { getPerson, listThanksForPerson } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +13,7 @@ export default async function PersonPage({
 }: {
   params: { id: string };
 }) {
-  await requireAuthUser(`/people/${params.id}`);
+  const user = await requireAuthUser(`/people/${params.id}`);
 
   const person = await getPerson(params.id);
   if (!person) {
@@ -21,8 +21,7 @@ export default async function PersonPage({
   }
 
   const { received, given } = await listThanksForPerson(params.id);
-  const currentPerson = await getCurrentPerson();
-  const isOwnProfile = currentPerson?.id === person.id;
+  const isOwnProfile = person.auth_user_id === user.id;
 
   return (
     <div className="space-y-8">
