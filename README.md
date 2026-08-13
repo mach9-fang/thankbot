@@ -149,8 +149,17 @@ Open [http://localhost:3000](http://localhost:3000).
    Nothing in CI does this for you. The app degrades rather than breaking when a
    migration is outstanding — a thanks sent before
    `0004_group_thanks_recipients.sql` is applied is still recorded, but as one
-   row per recipient instead of one shared card — so check
-   `supabase migration list` if the board starts showing a card per name.
+   row per recipient instead of one shared card.
+5. Check `GET /api/health` after the deploy. It needs no session and answers
+   `503` with the filenames still to apply:
+
+   ```json
+   { "ok": false, "shape": "legacy",
+     "pendingMigrations": ["0004_group_thanks_recipients.sql"] }
+   ```
+
+   Point an uptime monitor at it and a schema that has fallen behind the code
+   raises an alarm instead of waiting to be found by somebody saying thanks.
 
 Slack keeps talking to whichever deployment its slash command Request URL points
 at, so a change to `/thanks` only shows up in Slack once that deployment is the
@@ -163,6 +172,7 @@ one carrying it.
 | `GET` | `/api/thanks` | Recent thanks (`?limit=50`) |
 | `POST` | `/api/thanks` | Send thanks — requires a session; body `{ to_person_ids, reason }` (or legacy `to_person_id`) |
 | `POST` | `/api/slack/thanks` | Slack slash command — verified with signing secret |
+| `GET` | `/api/health` | Deploy check — no session needed; `503` while a migration is outstanding |
 | `GET` | `/thanks/[id]` | Public card for one thanks, with one or more recipients |
 | `GET` | `/api/people` | People with received/given counts |
 | `GET` | `/api/people/[id]` | Person + received/given history |
@@ -181,5 +191,6 @@ one carrying it.
 | `pnpm tsx scripts/test-slack-recipients.ts` | Recipient resolution for `/thanks` without a mention |
 | `pnpm tsx scripts/test-recipient-list.ts` | Reading a typed or pasted list of names on the web form |
 | `pnpm tsx scripts/test-thanks-write-paths.ts` | Web + Slack writes against whichever schema is live (needs local Supabase + `.env.local`) |
+| `pnpm tsx scripts/test-schema-health.ts` | `/api/health` reports the live schema honestly (needs local Supabase + `.env.local`) |
 | `pnpm tsx scripts/test-slack-dm-flow.ts` | Slack DM flow end to end (needs local Supabase + `.env.local`) |
 | `pnpm tsx scripts/test-slack-multi-recipient.ts` | Thanking several people at once end to end (needs local Supabase + `.env.local`) |
