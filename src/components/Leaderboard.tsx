@@ -2,13 +2,19 @@ import Link from "next/link";
 import type { PersonWithStats } from "@/lib/types";
 import { Avatar } from "./Avatar";
 
-export function Leaderboard({ people }: { people: PersonWithStats[] }) {
+export function Leaderboard({
+  people,
+  emptyMessage = "No thanks yet — send the first one to start the leaderboard.",
+}: {
+  people: PersonWithStats[];
+  emptyMessage?: string;
+}) {
   const top = people.filter((p) => p.thanks_received > 0).slice(0, 8);
 
   if (top.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-ink-200 bg-white/50 p-6 text-sm text-ink-500">
-        No thanks yet — send the first one to start the leaderboard.
+        {emptyMessage}
       </div>
     );
   }

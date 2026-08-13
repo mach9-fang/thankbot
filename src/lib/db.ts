@@ -24,16 +24,61 @@ export const MAX_REASON_LENGTH = 500;
 export const ALLOW_SELF_THANKS =
   process.env.NEXT_PUBLIC_ALLOW_SELF_THANKS === "true";
 
-export async function listThanks(limit = 50): Promise<ThanksWithPeople[]> {
+export async function listThanks(
+  limit = 50,
+  range?: { start: Date; end: Date }
+): Promise<ThanksWithPeople[]> {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from("thanks")
     .select(THANKS_SELECT)
     .order("created_at", { ascending: false })
     .limit(limit);
 
+  if (range) {
+    query = query
+      .gte("created_at", range.start.toISOString())
+      .lt("created_at", range.end.toISOString());
+  }
+
+  const { data, error } = await query;
+
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as ThanksWithPeople[];
+}
+
+export async function getEarliestThanksAt(): Promise<string | null> {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("thanks")
+    .select("created_at")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return data?.created_at ?? null;
+}
+
+export async function countThanksReceivedInRange(range: {
+  start: Date;
+  end: Date;
+}): Promise<Map<string, number>> {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("thanks")
+    .select("to_person_id")
+    .gte("created_at", range.start.toISOString())
+    .lt("created_at", range.end.toISOString());
+
+  if (error) throw new Error(error.message);
+
+  const counts = new Map<string, number>();
+  for (const row of data ?? []) {
+    const id = (row as { to_person_id: string }).to_person_id;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 export async function getThanks(id: string): Promise<ThanksWithPeople | null> {
