@@ -152,3 +152,14 @@ begin
   return v_thanks_id;
 end;
 $$;
+
+-- Hosted Supabase no longer auto-exposes new public objects to the Data API
+-- roles. Without EXECUTE, PostgREST omits this RPC from its schema cache and
+-- Slack/web writes fail with PGRST202 ("Could not find the function
+-- public.create_thanks_card ... in the schema cache").
+grant all on table public.thank_recipients to anon, authenticated, service_role;
+grant select on public.people_with_stats to anon, authenticated, service_role;
+grant execute on function public.create_thanks_card(uuid, uuid[], text, text)
+  to anon, authenticated, service_role;
+
+notify pgrst, 'reload schema';
