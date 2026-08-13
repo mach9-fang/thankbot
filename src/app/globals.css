@@ -9,14 +9,39 @@
 
 body {
   color: var(--foreground);
-  /* Fixed so the mascot's blurple/aqua/heart wash stays put while the feed scrolls. */
+  background: var(--background);
+  isolation: isolate;
+  min-height: 100vh;
+}
+
+body::before {
+  /* Oversized so the wash can drift without exposing an edge. */
   background:
     radial-gradient(ellipse 70% 45% at 50% -15%, #c3adff 0%, transparent 60%),
     radial-gradient(ellipse 45% 35% at 100% 0%, #9eeee7 0%, transparent 55%),
-    radial-gradient(ellipse 35% 28% at 0% 100%, #ffd6de 0%, transparent 60%),
-    var(--background);
-  background-attachment: fixed;
-  min-height: 100vh;
+    radial-gradient(ellipse 35% 28% at 0% 100%, #ffd6de 0%, transparent 60%);
+  content: "";
+  inset: -8vmax;
+  pointer-events: none;
+  position: fixed;
+  z-index: -1;
+  animation: ambient-drift 24s ease-in-out infinite alternate;
+}
+
+@keyframes ambient-drift {
+  from {
+    transform: translate3d(-1%, -0.5%, 0) scale(1);
+  }
+
+  to {
+    transform: translate3d(1.5%, 1%, 0) scale(1.025);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none;
+  }
 }
 
 @layer utilities {
