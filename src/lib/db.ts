@@ -249,16 +249,89 @@ export const MAX_REASON_LENGTH = 500;
 export const ALLOW_SELF_THANKS =
   process.env.NEXT_PUBLIC_ALLOW_SELF_THANKS === "true";
 
-export async function listThanks(limit = 50): Promise<ThanksWithPeople[]> {
+export async function listThanks(
+  limit = 50,
+  range?: { start: Date; end: Date }
+): Promise<ThanksWithPeople[]> {
   const supabase = createServerSupabase();
-  const { data, error } = await supabase
+  let query = supabase
     .from("thanks")
     .select(THANKS_CORE_SELECT)
     .order("created_at", { ascending: false })
     .limit(limit);
 
+  if (range) {
+    query = query
+      .gte("created_at", range.start.toISOString())
+      .lt("created_at", range.end.toISOString());
+  }
+
+  const { data, error } = await query;
+
   if (error) throw new Error(error.message);
   return withRecipients(supabase, (data ?? []) as unknown as ThanksCoreRow[]);
+}
+
+export async function getEarliestThanksAt(): Promise<string | null> {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("thanks")
+    .select("created_at")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return data?.created_at ?? null;
+}
+
+/**
+ * How many times each person was named on a card written in `range`.
+ *
+ * A card can name several people, so the tally comes from `thank_recipients`
+ * filtered by its card's `created_at`. Falls back to the pre-0004 shape, where
+ * the recipient lived on the card itself, so a database still waiting for
+ * `0004_group_thanks_recipients.sql` ranks the board instead of blanking it.
+ */
+export async function countThanksReceivedInRange(range: {
+  start: Date;
+  end: Date;
+}): Promise<Map<string, number>> {
+  const supabase = createServerSupabase();
+  const startedAt = range.start.toISOString();
+  const endedAt = range.end.toISOString();
+
+  const counts = new Map<string, number>();
+  const tally = (id: string | null | undefined) => {
+    if (!id) return;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  };
+
+  const grouped = await supabase
+    .from("thank_recipients")
+    .select("person_id, thanks!thank_recipients_thanks_id_fkey!inner (created_at)")
+    .gte("thanks.created_at", startedAt)
+    .lt("thanks.created_at", endedAt);
+
+  if (!grouped.error) {
+    for (const row of grouped.data ?? []) {
+      tally((row as { person_id: string }).person_id);
+    }
+    return counts;
+  }
+
+  const legacy = await supabase
+    .from("thanks")
+    .select("to_person_id")
+    .gte("created_at", startedAt)
+    .lt("created_at", endedAt);
+
+  if (legacy.error) throw new Error(grouped.error.message);
+
+  for (const row of legacy.data ?? []) {
+    tally((row as { to_person_id?: string | null }).to_person_id);
+  }
+  return counts;
 }
 
 export async function getThanks(id: string): Promise<ThanksWithPeople | null> {

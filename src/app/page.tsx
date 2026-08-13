@@ -1,14 +1,57 @@
 import { Leaderboard } from "@/components/Leaderboard";
 import { ThanksCard } from "@/components/ThanksCard";
 import { ThanksForm } from "@/components/ThanksForm";
+import { TimeRangeSelector } from "@/components/TimeRangeSelector";
 import { requireCurrentPerson } from "@/lib/auth";
-import { listPeople, listThanks } from "@/lib/db";
+import {
+  countThanksReceivedInRange,
+  getEarliestThanksAt,
+  listPeople,
+  listThanks,
+} from "@/lib/db";
+import {
+  currentRange,
+  listPeriodOptions,
+  parseTimeRangeParams,
+} from "@/lib/time-range";
 
 export const dynamic = "force-dynamic";
 
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: { period?: string; range?: string };
+}) {
   const currentPerson = await requireCurrentPerson();
-  const [thanks, people] = await Promise.all([listThanks(50), listPeople()]);
+  const selectedRange = parseTimeRangeParams(searchParams);
+
+  const [thanks, people, earliestThanksAt, receivedCounts] = await Promise.all([
+    listThanks(50, selectedRange),
+    listPeople(),
+    getEarliestThanksAt(),
+    countThanksReceivedInRange(selectedRange),
+  ]);
+
+  const periodOptions = listPeriodOptions(
+    selectedRange.kind,
+    earliestThanksAt,
+    selectedRange
+  );
+  const currentKey = currentRange(selectedRange.kind).key;
+
+  // The leaderboard answers "who was thanked in this period", so it ranks on the
+  // period's tally rather than the all-time count carried by `people`.
+  const rankedPeople = people
+    .map((person) => ({
+      ...person,
+      thanks_received: receivedCounts.get(person.id) ?? 0,
+    }))
+    .sort(
+      (a, b) =>
+        b.thanks_received - a.thanks_received || a.name.localeCompare(b.name)
+    );
+
+  const boardIsEmpty = earliestThanksAt === null;
 
   return (
     <div className="space-y-6">
@@ -26,7 +69,7 @@ export default async function HomePage() {
             <p className="text-2xl font-semibold tabular-nums text-brand-700">
               {thanks.length}
             </p>
-            <p className="text-xs text-ink-500">recent thanks</p>
+            <p className="text-xs text-ink-500">thanks this period</p>
           </div>
           <div className="h-8 w-px bg-brand-100" aria-hidden />
           <div className="text-right">
@@ -40,32 +83,53 @@ export default async function HomePage() {
 
       <ThanksForm currentPerson={currentPerson} people={people} />
 
-      <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
-        <section className="space-y-4">
-          <div className="flex items-end justify-between gap-3">
+      <div className="space-y-4">
+        <TimeRangeSelector
+          kind={selectedRange.kind}
+          rangeKey={selectedRange.key}
+          options={periodOptions.map((option) => ({
+            key: option.key,
+            label:
+              option.key === currentKey
+                ? `${option.label} · this ${selectedRange.kind}`
+                : option.label,
+          }))}
+        />
+
+        <div className="grid gap-8 lg:grid-cols-[1fr_280px]">
+          <section className="space-y-4">
             <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-ink-900">
               Latest thanks
             </h2>
-          </div>
-          {thanks.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-ink-200 bg-white/60 p-10 text-center text-ink-500">
-              No thanks yet. Send the first one above to get the board started.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {thanks.map((entry) => (
-                <ThanksCard key={entry.id} thanks={entry} />
-              ))}
-            </div>
-          )}
-        </section>
+            {thanks.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-ink-200 bg-white/60 p-10 text-center text-ink-500">
+                {boardIsEmpty
+                  ? "No thanks yet. Send the first one above to get the board started."
+                  : `No thanks in ${selectedRange.label}. Send one above to get this period started.`}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {thanks.map((entry) => (
+                  <ThanksCard key={entry.id} thanks={entry} />
+                ))}
+              </div>
+            )}
+          </section>
 
-        <aside className="space-y-3 lg:sticky lg:top-6 lg:self-start">
-          <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-ink-900">
-            Most thanked
-          </h2>
-          <Leaderboard people={people} />
-        </aside>
+          <aside className="space-y-3 lg:sticky lg:top-6 lg:self-start">
+            <h2 className="font-[family-name:var(--font-display)] text-xl font-semibold text-ink-900">
+              Most thanked
+            </h2>
+            <Leaderboard
+              people={rankedPeople}
+              emptyMessage={
+                boardIsEmpty
+                  ? "No thanks yet — send the first one to start the leaderboard."
+                  : `No thanks in ${selectedRange.label} — send one to start the leaderboard.`
+              }
+            />
+          </aside>
+        </div>
       </div>
     </div>
   );

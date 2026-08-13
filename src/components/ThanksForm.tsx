@@ -80,7 +80,7 @@ export function ThanksForm({
       </h2>
 
       <label className="mt-4 block">
-        <span className="text-sm font-medium text-ink-700">To whom</span>
+        <span className="text-sm font-medium text-ink-700">To</span>
         <div className="mt-1.5">
           <PersonTypeahead
             people={teammates}
@@ -94,7 +94,7 @@ export function ThanksForm({
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
         <label className="block min-w-0 flex-1">
-          <span className="text-sm font-medium text-ink-700">For what</span>
+          <span className="text-sm font-medium text-ink-700">For</span>
           <input
             value={reason}
             onChange={(event) => setReason(event.target.value)}
