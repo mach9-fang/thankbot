@@ -24,6 +24,113 @@ type ThanksCoreRow = Thanks & { from_person: PersonSummary };
 
 type BoardClient = { from: ReturnType<typeof createServerSupabase>["from"] };
 
+type WriteClient = BoardClient & {
+  rpc: ReturnType<typeof createServerSupabase>["rpc"];
+};
+
+type QueryError = { code?: string | null; message?: string | null };
+
+/** PostgREST hides a function it cannot see behind PGRST202 rather than a 500. */
+function isMissingFunction(error: QueryError | null): boolean {
+  if (!error) return false;
+  return (
+    error.code === "PGRST202" ||
+    /could not find the function/i.test(error.message ?? "")
+  );
+}
+
+/** Pre-0004 boards still carry the NOT NULL `thanks.to_person_id` column. */
+function isMissingRecipientColumn(error: QueryError | null): boolean {
+  if (!error) return false;
+  return (
+    error.code === "23502" ||
+    /to_person_id/i.test(error.message ?? "")
+  );
+}
+
+/**
+ * Record one card and everyone it names.
+ *
+ * The `create_thanks_card` RPC does both inserts in one transaction and is the
+ * path every migrated database takes. A database still waiting for
+ * `0004_group_thanks_recipients.sql` has no such function, and PostgREST
+ * answers PGRST202 — which used to surface to the sender as "Could not find
+ * the function public.create_thanks_card ... in the schema cache" and lose the
+ * thanks entirely. Fall back to writing the rows directly so a pending
+ * migration degrades the shape of the card instead of refusing the thanks.
+ */
+export async function insertThanksCard(
+  supabase: WriteClient,
+  input: {
+    fromPersonId: string;
+    toPersonIds: string[];
+    reason: string;
+    source: "web" | "slack" | "seed";
+  }
+): Promise<{ id: string } | { error: string }> {
+  const { fromPersonId, toPersonIds, reason, source } = input;
+
+  const viaRpc = await supabase.rpc("create_thanks_card", {
+    p_from_person_id: fromPersonId,
+    p_to_person_ids: toPersonIds,
+    p_reason: reason,
+    p_source: source,
+  });
+
+  if (!viaRpc.error) return { id: viaRpc.data as string };
+  if (!isMissingFunction(viaRpc.error)) return { error: viaRpc.error.message };
+
+  console.warn(
+    "create_thanks_card is missing; apply supabase/migrations/0004_group_thanks_recipients.sql. Writing the thanks directly."
+  );
+
+  const card = await supabase
+    .from("thanks")
+    .insert({ from_person_id: fromPersonId, reason, source })
+    .select("id")
+    .single();
+
+  if (!card.error) {
+    const thanksId = card.data.id as string;
+    const recipients = await supabase
+      .from("thank_recipients")
+      .insert(toPersonIds.map((person_id) => ({ thanks_id: thanksId, person_id })));
+
+    if (recipients.error) {
+      // Never leave a card that names nobody.
+      await supabase.from("thanks").delete().eq("id", thanksId);
+      return { error: recipients.error.message };
+    }
+
+    return { id: thanksId };
+  }
+
+  if (!isMissingRecipientColumn(card.error)) {
+    return { error: card.error.message };
+  }
+
+  // Oldest shape: one row per recipient, which is what the board showed before
+  // recipients were grouped onto a single card.
+  const legacy = await supabase
+    .from("thanks")
+    .insert(
+      toPersonIds.map((to_person_id) => ({
+        from_person_id: fromPersonId,
+        to_person_id,
+        reason,
+        source,
+      }))
+    )
+    .select("id");
+
+  if (legacy.error) return { error: legacy.error.message };
+
+  const first = (legacy.data ?? [])[0]?.id as string | undefined;
+  if (!first) return { error: "Could not record the thanks." };
+
+  return { id: first };
+}
+
 function sortPeople(people: PersonSummary[]) {
   return [...people].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -87,6 +194,11 @@ async function withRecipients(
   }));
 }
 
+/**
+ * Last-resort tally for a database where `people_with_stats` is missing or
+ * ungranted. PostgREST caps how many rows it will return, so counts here can
+ * undercount a very large board — restore the view rather than relying on this.
+ */
 async function withStats(
   supabase: BoardClient,
   people: Person[]
@@ -167,6 +279,17 @@ export async function getThanks(id: string): Promise<ThanksWithPeople | null> {
 
 export async function listPeople(): Promise<PersonWithStats[]> {
   const supabase = createServerSupabase();
+
+  // The view counts in Postgres, so it stays correct past the row cap
+  // PostgREST puts on the tallied-in-JS fallback below.
+  const view = await supabase
+    .from("people_with_stats")
+    .select("*")
+    .order("thanks_received", { ascending: false })
+    .order("name", { ascending: true });
+
+  if (!view.error) return (view.data ?? []) as PersonWithStats[];
+
   const { data, error } = await supabase
     .from("people")
     .select("*")
@@ -178,6 +301,15 @@ export async function listPeople(): Promise<PersonWithStats[]> {
 
 export async function getPerson(id: string): Promise<PersonWithStats | null> {
   const supabase = createServerSupabase();
+
+  const view = await supabase
+    .from("people_with_stats")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!view.error) return (view.data as PersonWithStats | null) ?? null;
+
   const { data, error } = await supabase
     .from("people")
     .select("*")
@@ -353,18 +485,18 @@ export async function createThanks(input: {
   }
 
   const supabase = createServerSupabase();
-  const { data: thanksId, error } = await supabase.rpc("create_thanks_card", {
-    p_from_person_id: sender.id,
-    p_to_person_ids: toPersonIds,
-    p_reason: reason,
-    p_source: "web",
+  const written = await insertThanksCard(supabase, {
+    fromPersonId: sender.id,
+    toPersonIds,
+    reason,
+    source: "web",
   });
 
-  if (error) {
-    return { ok: false, status: 400, error: error.message };
+  if ("error" in written) {
+    return { ok: false, status: 400, error: written.error };
   }
 
-  const thanks = await getThanks(thanksId as string);
+  const thanks = await getThanks(written.id);
   if (!thanks) {
     return { ok: false, status: 500, error: "Could not load the new thanks." };
   }
@@ -480,21 +612,21 @@ export async function createSlackThanks(input: {
   }
 
   const supabase = createServiceSupabase();
-  const { data: thanksId, error } = await supabase.rpc("create_thanks_card", {
-    p_from_person_id: input.fromPersonId,
-    p_to_person_ids: toPersonIds,
-    p_reason: reason,
-    p_source: "slack",
+  const written = await insertThanksCard(supabase, {
+    fromPersonId: input.fromPersonId,
+    toPersonIds,
+    reason,
+    source: "slack",
   });
 
-  if (error) {
-    return { ok: false, status: 400, error: error.message };
+  if ("error" in written) {
+    return { ok: false, status: 400, error: written.error };
   }
 
   const { data, error: selectError } = await supabase
     .from("thanks")
     .select(THANKS_CORE_SELECT)
-    .eq("id", thanksId as string)
+    .eq("id", written.id)
     .maybeSingle();
 
   if (selectError || !data) {

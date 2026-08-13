@@ -23,7 +23,15 @@ alter default privileges in schema public
 
 -- Website thanks need a Google session; Slack/seed use the service role.
 -- The blanket routine grant above would otherwise let the anon key call it.
-revoke all on function public.create_thanks_card(uuid, uuid[], text, text)
-  from public, anon;
-grant execute on function public.create_thanks_card(uuid, uuid[], text, text)
-  to authenticated, service_role;
+-- Guarded so this file still runs against a database that has not applied
+-- `0004_group_thanks_recipients.sql` yet.
+do $$
+begin
+  if to_regprocedure('public.create_thanks_card(uuid, uuid[], text, text)')
+     is not null then
+    revoke all on function public.create_thanks_card(uuid, uuid[], text, text)
+      from public, anon;
+    grant execute on function public.create_thanks_card(uuid, uuid[], text, text)
+      to authenticated, service_role;
+  end if;
+end $$;

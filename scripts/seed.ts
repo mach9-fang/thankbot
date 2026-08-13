@@ -68,16 +68,24 @@ async function main() {
     return;
   }
 
+  const { insertThanksCard } = await import("../src/lib/db");
+
   for (const entry of THANKS) {
-    const { error: thanksError } = await supabase.rpc("create_thanks_card", {
-      p_from_person_id: idByEmail.get(entry.from),
-      p_to_person_ids: [entry.to]
-        .flat()
-        .map((email) => idByEmail.get(email)),
-      p_reason: entry.reason,
-      p_source: "seed",
+    const fromPersonId = idByEmail.get(entry.from);
+    const toPersonIds = [entry.to]
+      .flat()
+      .map((email) => idByEmail.get(email))
+      .filter((id): id is string => Boolean(id));
+
+    if (!fromPersonId) throw new Error(`Unknown sender ${entry.from}`);
+
+    const written = await insertThanksCard(supabase, {
+      fromPersonId,
+      toPersonIds,
+      reason: entry.reason,
+      source: "seed",
     });
-    if (thanksError) throw new Error(thanksError.message);
+    if ("error" in written) throw new Error(written.error);
   }
 
   console.log(`Seeded ${PEOPLE.length} people and ${THANKS.length} thanks.`);
