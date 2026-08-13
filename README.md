@@ -145,8 +145,12 @@ Open [http://localhost:3000](http://localhost:3000).
    make sure the same URL is in Supabase's redirect list and the Slack slash
    command Request URL.
 4. Apply any new files in `supabase/migrations/` to the hosted project as part
-   of the same release — the app reads the current schema, so a deploy that runs
-   ahead of its migration cannot render the board.
+   of the same release (`pnpm db:push`, or paste them into the SQL editor).
+   Nothing in CI does this for you. The app degrades rather than breaking when a
+   migration is outstanding — a thanks sent before
+   `0004_group_thanks_recipients.sql` is applied is still recorded, but as one
+   row per recipient instead of one shared card — so check
+   `supabase migration list` if the board starts showing a card per name.
 
 Slack keeps talking to whichever deployment its slash command Request URL points
 at, so a change to `/thanks` only shows up in Slack once that deployment is the
@@ -171,9 +175,11 @@ one carrying it.
 | `pnpm build` | Production build |
 | `pnpm start` | Run the production build |
 | `pnpm seed` | Load demo people + thanks (needs service role key) |
+| `pnpm db:push` | Apply `supabase/migrations/` to the linked hosted project |
 | `pnpm lint` | ESLint |
 | `pnpm tsx scripts/test-parse.ts` | Slack `/thanks` text parser assertions |
 | `pnpm tsx scripts/test-slack-recipients.ts` | Recipient resolution for `/thanks` without a mention |
 | `pnpm tsx scripts/test-recipient-list.ts` | Reading a typed or pasted list of names on the web form |
+| `pnpm tsx scripts/test-thanks-write-paths.ts` | Web + Slack writes against whichever schema is live (needs local Supabase + `.env.local`) |
 | `pnpm tsx scripts/test-slack-dm-flow.ts` | Slack DM flow end to end (needs local Supabase + `.env.local`) |
 | `pnpm tsx scripts/test-slack-multi-recipient.ts` | Thanking several people at once end to end (needs local Supabase + `.env.local`) |
