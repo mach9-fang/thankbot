@@ -33,25 +33,15 @@ export async function Header() {
         </Link>
 
         {currentPerson ? (
-          <div className="flex items-center gap-3">
-            <Link
-              href={`/people/${currentPerson.id}`}
-              className="flex items-center gap-2.5 rounded-xl px-2 py-1.5 transition hover:bg-white"
-            >
-              <Avatar person={currentPerson} size="sm" />
-              <span className="hidden text-sm font-medium text-ink-800 sm:block">
-                {currentPerson.name}
-              </span>
-            </Link>
-            <form action="/auth/signout" method="post">
-              <button
-                type="submit"
-                className="rounded-xl border border-ink-200 px-3 py-1.5 text-sm text-ink-600 transition hover:border-brand-200 hover:bg-white hover:text-ink-900"
-              >
-                Sign out
-              </button>
-            </form>
-          </div>
+          <Link
+            href={`/people/${currentPerson.id}`}
+            className="flex items-center gap-2.5 rounded-xl px-2 py-1.5 transition hover:bg-white"
+          >
+            <Avatar person={currentPerson} size="sm" />
+            <span className="hidden text-sm font-medium text-ink-800 sm:block">
+              {currentPerson.name}
+            </span>
+          </Link>
         ) : null}
       </div>
     </header>
