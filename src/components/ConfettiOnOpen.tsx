@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import type { Options } from "canvas-confetti";
 
 const COLORS = [
   "#6436f2",
@@ -13,9 +14,18 @@ const COLORS = [
   "#ffffff",
 ];
 
-/** Same path as the heart icon on the thank-you card. */
+/**
+ * Heart from the canvas-confetti custom-shape demo (Noun Project heart-1545381).
+ * Path shapes render smaller than squares/stars, so the cached matrix plus a
+ * higher scalar keeps them readable in the mix.
+ */
 const HEART_PATH =
-  "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z";
+  "M167 72c19,-38 37,-56 75,-56 42,0 76,33 76,75 0,76 -76,151 -151,227 -76,-76 -151,-151 -151,-227 0,-42 33,-75 75,-75 38,0 57,18 76,56z";
+
+const HEART_MATRIX = [
+  0.03333333333333333, 0, 0, 0.03333333333333333, -5.566666666666666,
+  -5.533333333333333,
+] as unknown as DOMMatrix;
 
 export function ConfettiOnOpen() {
   useEffect(() => {
@@ -33,41 +43,50 @@ export function ConfettiOnOpen() {
 
       reset = confetti.reset;
 
-      const heart = confetti.shapeFromPath({ path: HEART_PATH });
-      // Classic pieces still dominate; stars and hearts show up as a regular mix.
-      const shapes = [
-        "square",
-        "circle",
-        "square",
-        "circle",
-        "star",
-        heart,
-      ] as const;
+      const heart = confetti.shapeFromPath({
+        path: HEART_PATH,
+        matrix: HEART_MATRIX,
+      });
 
-      const defaults = {
+      const defaults: Options = {
         colors: COLORS,
         disableForReducedMotion: true,
-        shapes: [...shapes],
       };
 
-      void confetti({
-        ...defaults,
+      function fire(opts: Options) {
+        void confetti({
+          ...defaults,
+          shapes: ["square", "circle", "square", "circle", "star"],
+          ...opts,
+        });
+        // Path hearts need a bit more scale to sit next to built-in stars.
+        void confetti({
+          ...defaults,
+          ...opts,
+          shapes: [heart, "star"],
+          scalar: (opts.scalar ?? 1) * 1.7,
+          particleCount: Math.max(
+            8,
+            Math.round((opts.particleCount ?? 50) * 0.4)
+          ),
+        });
+      }
+
+      fire({
         particleCount: 80,
         spread: 70,
         startVelocity: 48,
         origin: { x: 0.5, y: 0.55 },
       });
 
-      void confetti({
-        ...defaults,
+      fire({
         particleCount: 45,
         angle: 60,
         spread: 55,
         origin: { x: 0, y: 0.7 },
       });
 
-      void confetti({
-        ...defaults,
+      fire({
         particleCount: 45,
         angle: 120,
         spread: 55,
@@ -76,8 +95,7 @@ export function ConfettiOnOpen() {
 
       followUp = window.setTimeout(() => {
         if (cancelled) return;
-        void confetti({
-          ...defaults,
+        fire({
           particleCount: 50,
           spread: 110,
           decay: 0.91,
