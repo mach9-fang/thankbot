@@ -190,6 +190,7 @@ one carrying it.
 | `pnpm tsx scripts/test-parse.ts` | Slack `/thanks` text parser assertions |
 | `pnpm tsx scripts/test-slack-recipients.ts` | Recipient resolution for `/thanks` without a mention |
 | `pnpm tsx scripts/test-recipient-list.ts` | Reading a typed or pasted list of names on the web form |
+| `pnpm tsx scripts/test-time-range.ts` | Which month or week the board's period picker means |
 | `pnpm tsx scripts/test-thanks-write-paths.ts` | Web + Slack writes against whichever schema is live (needs local Supabase + `.env.local`) |
 | `pnpm tsx scripts/test-schema-health.ts` | `/api/health` reports the live schema honestly (needs local Supabase + `.env.local`) |
 | `pnpm tsx scripts/test-slack-dm-flow.ts` | Slack DM flow end to end (needs local Supabase + `.env.local`) |
