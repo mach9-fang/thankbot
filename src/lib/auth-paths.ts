@@ -15,6 +15,9 @@ export const PUBLIC_PATHS = [
   // Slack's 3 second budget; this entry is the documented hole if that matcher
   // ever changes.
   "/api/slack",
+  // Deploy/uptime check. Reports which schema objects resolve and nothing about
+  // the board itself, so it stays useful to a monitor that has no session.
+  "/api/health",
 ];
 
 export function isPublicPath(pathname: string): boolean {
