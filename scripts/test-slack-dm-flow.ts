@@ -45,9 +45,21 @@ const stub = installSlackStub({
 });
 
 async function main() {
+  const { createClient } = await import("@supabase/supabase-js");
+  const { isPublicPath } = await import("../src/lib/auth-paths");
   const { createServiceSupabase } = await import("../src/lib/supabase/admin");
   const { POST } = await import("../src/app/api/slack/thanks/route");
   const supabase = createServiceSupabase();
+
+  assert.ok(
+    isPublicPath("/api/slack/thanks"),
+    "Slack posting must not require a Google session"
+  );
+  assert.ok(!isPublicPath("/"), "the website board stays behind sign-in");
+  assert.ok(
+    !isPublicPath("/thanks/some-id"),
+    "card pages on the website stay behind sign-in"
+  );
 
   async function removeTestPeople() {
     // Thanks cascade with their sender and recipients.
@@ -238,6 +250,23 @@ async function main() {
   );
 
   await removeTestPeople();
+
+  // The login wall must not leak the RPC to the public anon key. Slack posts
+  // with the service role instead, which the slash-command cases above used.
+  const anonUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  assert.ok(anonUrl && anonKey, "need the anon key to prove it cannot post");
+  const anon = createClient(anonUrl, anonKey, {
+    auth: { persistSession: false },
+  });
+  const { error: anonError } = await anon.rpc("create_thanks_card", {
+    p_from_person_id: "00000000-0000-0000-0000-000000000000",
+    p_to_person_ids: ["00000000-0000-0000-0000-000000000001"],
+    p_reason: "should not land",
+    p_source: "slack",
+  });
+  assert.ok(anonError, "the public anon key must not record a thanks");
+
   console.log("slack DM flow tests passed");
 }
 

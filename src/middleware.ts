@@ -72,8 +72,9 @@ function withCookiesFrom(source: NextResponse, target: NextResponse) {
 
 export const config = {
   matcher: [
-    // Slack routes authenticate with a signing secret, so skip the session
-    // refresh round trip that would eat into Slack's 3 second budget.
+    // Slack `/thanks` is the hole in the login wall: it authenticates with a
+    // signing secret, not Google, so skip the session refresh that would eat
+    // into Slack's 3 second budget. `/api/slack` is also in PUBLIC_PATHS.
     "/((?!api/slack|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
