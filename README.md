@@ -16,20 +16,24 @@ teammate, and everyone sees it on the feed.
    the session — never from the request body.
 3. From Slack, `/thanks @alice @bob for …` hits `POST /api/slack/thanks`, which
    upserts people by `slack_user_id` and writes one card shared by all recipients
-   with `source=slack`. You can thank a whole channel with `/thanks everyone for …`,
-   and omit the mention wherever ThankBot can see exactly one other person —
-   including a 1:1 DM with a teammate once `SLACK_USER_TOKEN` is set (see below).
-   Mentions that aren't in the conversation (or don't exist) are skipped and
-   reported back.
-4. On the web, the form's typeahead lets you pick multiple teammates before
-   sending. The feed, leaderboard, and `/people/[id]` pages read from Postgres.
+   with `source=slack`. List people however you'd write them — `@alice, @bob`,
+   `@alice, @bob, and @carol`, `@alice; @bob`, `@alice & @bob` — the separators
+   belong to the list, not to the reason. You can thank a whole channel with
+   `/thanks everyone for …`, and omit the mention wherever ThankBot can see
+   exactly one other person — including a 1:1 DM with a teammate once
+   `SLACK_USER_TOKEN` is set (see below). Mentions that aren't in the
+   conversation (or don't exist) are skipped and reported back.
+4. On the web, the form's typeahead takes several teammates: pick them from the
+   list, or type (or paste) names separated by commas, semicolons or "and". One
+   send is one card, whoever it names. The feed, leaderboard, and `/people/[id]`
+   pages read from Postgres.
 
 ## Setup
 
 ### 1. Database
 
 Run the files in `supabase/migrations/` in order in the Supabase SQL editor (or
-`supabase db push`). `0001_init.sql` creates:
+`supabase db push`). Together they create:
 
 | Object | Purpose |
 |--------|---------|
@@ -170,4 +174,6 @@ one carrying it.
 | `pnpm lint` | ESLint |
 | `pnpm tsx scripts/test-parse.ts` | Slack `/thanks` text parser assertions |
 | `pnpm tsx scripts/test-slack-recipients.ts` | Recipient resolution for `/thanks` without a mention |
+| `pnpm tsx scripts/test-recipient-list.ts` | Reading a typed or pasted list of names on the web form |
 | `pnpm tsx scripts/test-slack-dm-flow.ts` | Slack DM flow end to end (needs local Supabase + `.env.local`) |
+| `pnpm tsx scripts/test-slack-multi-recipient.ts` | Thanking several people at once end to end (needs local Supabase + `.env.local`) |

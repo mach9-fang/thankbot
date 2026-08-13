@@ -7,6 +7,8 @@ export type StubUser = {
   name: string;
   email?: string;
   isBot?: boolean;
+  /** What `@…` people type, when it differs from the display name. */
+  handle?: string;
 };
 
 export type StubWorkspace = {
@@ -92,6 +94,19 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
           is_bot: user.isBot ?? false,
           profile: { real_name: user.name, email: user.email },
         },
+      });
+    }
+
+    if (url.endsWith("/users.list")) {
+      return jsonResponse({
+        ok: true,
+        members: Object.entries(workspace.users).map(([id, user]) => ({
+          id,
+          name: user.handle ?? user.name,
+          real_name: user.name,
+          is_bot: user.isBot ?? false,
+          profile: { real_name: user.name, display_name: user.handle ?? "" },
+        })),
       });
     }
 
