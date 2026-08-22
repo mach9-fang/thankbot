@@ -16,6 +16,7 @@ import { installSlackStub } from "./slack-stub";
 loadEnvFile(".env.local");
 
 const BOT = "xoxb-health-test";
+const USER = "xoxp-health-test";
 const CURRENT_SCOPES = [
   "commands",
   "chat:write",
@@ -30,6 +31,8 @@ const CURRENT_SCOPES = [
 
 async function main() {
   process.env.SLACK_BOT_TOKEN = BOT;
+  // Owned by this test, not by whatever .env.local happens to carry.
+  delete process.env.SLACK_USER_TOKEN;
   // Keep the probe off the network: a real Slack call would make this test
   // depend on the workspace it happens to run next to.
   let slack = installSlackStub({
@@ -130,6 +133,56 @@ async function main() {
 
   assert.deepStrictEqual(health.slack.missingScopes, []);
   assert.strictEqual(health.slack.configured, true);
+  assert.strictEqual(
+    health.slack.user,
+    undefined,
+    "an optional user token that is not set is not a fault"
+  );
+
+  // A user token is how a private channel or a DM works without an invite, so
+  // one that cannot read them has to be as visible as a missing bot scope.
+  process.env.SLACK_USER_TOKEN = USER;
+  slack.restore();
+  slack = installSlackStub({
+    users: {},
+    channels: {},
+    tokenOwners: { [BOT]: "B_THANKBOT", [USER]: "U_INSTALLER" },
+    grantedScopes: CURRENT_SCOPES,
+  });
+  try {
+    const withUser = await GET();
+    const body = await withUser.json();
+    assert.strictEqual(withUser.status, 200, JSON.stringify(body));
+    assert.deepStrictEqual(body.slack.user.missingScopes, []);
+
+    slack.restore();
+    slack = installSlackStub({
+      users: {},
+      channels: {},
+      tokenOwners: { [BOT]: "B_THANKBOT", [USER]: "U_INSTALLER" },
+      grantedScopes: ["commands", "chat:write", "channels:join", "users:read"],
+    });
+    const stale = await GET();
+    const staleBody = await stale.json();
+    assert.strictEqual(stale.status, 503, JSON.stringify(staleBody));
+    assert.deepStrictEqual(staleBody.slack.user.missingScopes, [
+      "reactions:read",
+      "channels:history",
+      "groups:history",
+      "im:history",
+      "mpim:history",
+    ]);
+  } finally {
+    delete process.env.SLACK_USER_TOKEN;
+  }
+
+  slack.restore();
+  slack = installSlackStub({
+    users: {},
+    channels: {},
+    tokenOwners: { [BOT]: "B_THANKBOT" },
+    grantedScopes: CURRENT_SCOPES,
+  });
 
   // Slack scopes are granted by hand too, and a release that needs a new one
   // is just as broken as a release missing a migration.
