@@ -71,10 +71,7 @@ export async function renderThanksCardGif(
 
   const gif = GIFEncoder();
   for (let i = 0; i < THANKS_CARD_GIF_FRAME_COUNT; i++) {
-    const t =
-      THANKS_CARD_GIF_FRAME_COUNT === 1
-        ? 1
-        : i / (THANKS_CARD_GIF_FRAME_COUNT - 1);
+    const t = i / Math.max(1, THANKS_CARD_GIF_FRAME_COUNT - 1);
     const frame = i === THANKS_CARD_GIF_FRAME_COUNT - 1 ? last : base.slice();
     if (i !== THANKS_CARD_GIF_FRAME_COUNT - 1) {
       drawConfetti(frame, width, height, particles, t);
