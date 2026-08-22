@@ -56,9 +56,9 @@ assert.ok(
   "the HTML card page stays behind sign-in"
 );
 assert.strictEqual(THANKS_CARD_GIF_DURATION_MS, 1000);
-// The recorded window is the second of animation from 0.3s to 1.3s.
-assert.strictEqual(THANKS_CARD_GIF_START_MS, 300);
-assert.strictEqual(THANKS_CARD_GIF_END_MS, 1300);
+// The recorded window is the second of animation from 0.5s to 1.5s.
+assert.strictEqual(THANKS_CARD_GIF_START_MS, 500);
+assert.strictEqual(THANKS_CARD_GIF_END_MS, 1500);
 assert.strictEqual(
   THANKS_CARD_GIF_END_MS - THANKS_CARD_GIF_START_MS,
   THANKS_CARD_GIF_DURATION_MS

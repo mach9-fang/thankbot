@@ -10,8 +10,8 @@ export const THANKS_CARD_GIF_FRAME_COUNT = 10;
 export const THANKS_CARD_GIF_FRAME_DELAY_MS = 100;
 export const THANKS_CARD_GIF_DURATION_MS =
   THANKS_CARD_GIF_FRAME_COUNT * THANKS_CARD_GIF_FRAME_DELAY_MS;
-/** The burst is sampled from 0.3s to 1.3s, so the GIF opens mid-air. */
-export const THANKS_CARD_GIF_START_MS = 300;
+/** The burst is sampled from 0.5s to 1.5s, so the GIF opens mid-air. */
+export const THANKS_CARD_GIF_START_MS = 500;
 export const THANKS_CARD_GIF_END_MS =
   THANKS_CARD_GIF_START_MS + THANKS_CARD_GIF_DURATION_MS;
 
