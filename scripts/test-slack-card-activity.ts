@@ -131,7 +131,7 @@ async function main() {
   });
   assert.deepStrictEqual(quiet, { status: "quiet" });
 
-  const activity = await fetchSlackCardActivity("C_KNOWN", "111.001", BOT);
+  const activity = await fetchSlackCardActivity("C_KNOWN", "111.001", { bot: BOT });
   assert.deepStrictEqual(
     activity.reactions.map((row) => ({
       name: row.name,
@@ -152,7 +152,7 @@ async function main() {
   assert.strictEqual(activity.replies[0].slackUserId, TEAMMATE);
   assert.match(activity.replies[0].text, /You're welcome/);
 
-  const missingMessage = await fetchSlackCardActivity("C_KNOWN", "9.999", BOT);
+  const missingMessage = await fetchSlackCardActivity("C_KNOWN", "9.999", { bot: BOT });
   assert.deepStrictEqual(missingMessage.reactions, []);
   assert.deepStrictEqual(missingMessage.replies, []);
   assert.deepStrictEqual(
@@ -203,10 +203,10 @@ async function main() {
     const denied = await postSlackMessage(CHANNEL, "should fail", BOT);
     assert.strictEqual(denied, null, "denied channels must not post as the bot");
 
-    const found = await findSlackAnnouncement(CHANNEL, recoverId, BOT);
+    const found = await findSlackAnnouncement(CHANNEL, recoverId, { bot: BOT });
     assert.deepStrictEqual(found, { status: "found", messageTs: recoveredTs });
 
-    const absent = await findSlackAnnouncement(CHANNEL, "no-such-card", BOT);
+    const absent = await findSlackAnnouncement(CHANNEL, "no-such-card", { bot: BOT });
     assert.deepStrictEqual(absent, { status: "missing" });
 
     const recovered = await loadThanksSlackActivity(recoverId, {
@@ -251,8 +251,10 @@ async function main() {
     assert.deepStrictEqual(state.blocker, {
       kind: "missing_scope",
       scopes: ["reactions:read", "channels:history"],
+      token: "bot",
     });
-    assert.match(said, /reactions:read and channels:history scopes/);
+    assert.match(said, /reactions:read and channels:history bot scopes/);
+    assert.match(said, /Bot Token Scopes/);
     assert.match(said, /reinstall/i);
   } finally {
     scopelessStub.restore();
@@ -285,6 +287,7 @@ async function main() {
     assert.deepStrictEqual(state.blocker, {
       kind: "missing_scope",
       scopes: ["channels:history"],
+      token: "bot",
     });
   } finally {
     halfStub.restore();
@@ -308,9 +311,12 @@ async function main() {
     });
     if (state.status !== "blocked") throw new Error("expected a blocked card");
     const said = describeSlackCardBlocker(state.blocker);
-    assert.deepStrictEqual(state.blocker, { kind: "not_a_member" });
-    assert.match(said, /not in this Slack conversation/);
-    assert.match(said, /channels:join/);
+    assert.deepStrictEqual(state.blocker, {
+      kind: "not_a_member",
+      userTokenConfigured: false,
+    });
+    assert.match(said, /never lets an app read a conversation it is not in/);
+    assert.match(said, /SLACK_USER_TOKEN/);
   } finally {
     goneStub.restore();
   }
@@ -332,7 +338,10 @@ async function main() {
       ref: { channelId: CHANNEL, messageTs: null },
     });
     if (state.status !== "blocked") throw new Error("expected a blocked card");
-    assert.deepStrictEqual(state.blocker, { kind: "not_a_member" });
+    assert.deepStrictEqual(state.blocker, {
+      kind: "not_a_member",
+      userTokenConfigured: false,
+    });
   } finally {
     outsiderStub.restore();
   }
@@ -375,20 +384,166 @@ async function main() {
     joinStub.restore();
   }
 
-  // A private channel or a DM cannot be joined, so the fallback still stands.
+  // A private channel or a DM cannot be joined, so posting falls back to the
+  // slash command's response_url.
   const privateStub = installSlackStub({
     users: { [SENDER]: { name: "Sam Sender" } },
     channels: {},
   });
   try {
     const refused = await postSlackMessage("G_PRIVATE", "hello room", BOT);
-    assert.strictEqual(refused, null, "a private channel needs a human invite");
+    assert.strictEqual(refused, null, "an app cannot join a private channel");
     assert.deepStrictEqual(privateStub.calls, [
       "chat.postMessage",
       "conversations.join",
     ]);
   } finally {
     privateStub.restore();
+  }
+
+  // Reading it is still possible without an invite: Slack lets a user token
+  // see whatever its owner sees, which is the only way a private channel or a
+  // group DM works at all.
+  const USER_TOKEN = "xoxp-installer";
+  const PRIVATE = "G_PRIVATE";
+  const privateTs = "444.001";
+  const userTokenStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" }, [TEAMMATE]: { name: "Riley Teammate" } },
+    // ThankBot is in nothing; the installer is in the private channel.
+    channels: { [PRIVATE]: { [USER_TOKEN]: [SENDER, TEAMMATE] } },
+    enforceReadMembership: true,
+    history: {
+      [PRIVATE]: [
+        { ts: privateTs, text: `thanks — <https://x.test/thanks/${"private-card"}|View card>` },
+      ],
+    },
+    messageActivity: {
+      [`${PRIVATE}:${privateTs}`]: {
+        reactions: [{ name: "tada", users: [TEAMMATE] }],
+        replies: [{ ts: "444.002", user: TEAMMATE, text: "Nice" }],
+      },
+    },
+  });
+  try {
+    process.env.SLACK_USER_TOKEN = USER_TOKEN;
+    const state = await loadThanksSlackActivity("private-card", {
+      status: "announced",
+      ref: { channelId: PRIVATE, messageTs: null },
+    });
+    assert.strictEqual(
+      state.status,
+      "activity",
+      "a user token should read a private channel ThankBot is not in"
+    );
+    if (state.status !== "activity") throw new Error("unreachable");
+    assert.strictEqual(state.blocker, null);
+    assert.strictEqual(state.activity.reactions[0].name, "tada");
+    assert.strictEqual(state.activity.comments[0].text, "Nice");
+    // Each read is tried as the bot first, so ThankBot's own membership still
+    // wins wherever it has been added, and the user token is only a fallback.
+    for (const method of [
+      "conversations.history",
+      "reactions.get",
+      "conversations.replies",
+    ]) {
+      assert.strictEqual(
+        userTokenStub.calls.filter((call) => call === method).length,
+        2,
+        `${method} should be tried as the bot and then as the user`
+      );
+    }
+  } finally {
+    delete process.env.SLACK_USER_TOKEN;
+    userTokenStub.restore();
+  }
+
+  // Without that token the card has to say so, and name the scopes to grant
+  // rather than tell somebody to go and invite an app.
+  const noUserTokenStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: { [PRIVATE]: {} },
+    enforceReadMembership: true,
+    history: { [PRIVATE]: [] },
+  });
+  try {
+    const state = await loadThanksSlackActivity("private-card", {
+      status: "announced",
+      ref: { channelId: PRIVATE, messageTs: privateTs },
+    });
+    if (state.status !== "blocked") throw new Error("expected a blocked card");
+    const said = describeSlackCardBlocker(state.blocker);
+    assert.deepStrictEqual(state.blocker, {
+      kind: "not_a_member",
+      userTokenConfigured: false,
+    });
+    assert.match(said, /SLACK_USER_TOKEN/);
+    assert.match(said, /im:history/);
+    assert.doesNotMatch(
+      said,
+      /invite ThankBot/,
+      "without a user token the fix is a token, not asking somebody to invite an app"
+    );
+  } finally {
+    noUserTokenStub.restore();
+  }
+
+  // With a user token that is also outside the room, an invite is all that is
+  // left, so say that instead.
+  const bothOutsideStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: { [PRIVATE]: {} },
+    enforceReadMembership: true,
+    history: { [PRIVATE]: [] },
+  });
+  try {
+    process.env.SLACK_USER_TOKEN = USER_TOKEN;
+    const state = await loadThanksSlackActivity("private-card", {
+      status: "announced",
+      ref: { channelId: PRIVATE, messageTs: privateTs },
+    });
+    if (state.status !== "blocked") throw new Error("expected a blocked card");
+    const said = describeSlackCardBlocker(state.blocker);
+    assert.deepStrictEqual(state.blocker, {
+      kind: "not_a_member",
+      userTokenConfigured: true,
+    });
+    assert.match(said, /invite ThankBot/);
+  } finally {
+    delete process.env.SLACK_USER_TOKEN;
+    bothOutsideStub.restore();
+  }
+
+  // A user token missing its own scopes points at the User Token Scopes list,
+  // not the bot one.
+  const userScopeStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: { [PRIVATE]: {} },
+    enforceReadMembership: true,
+    refuse: {
+      "conversations.replies": {
+        error: "missing_scope",
+        needed: "groups:history",
+      },
+    },
+    messageActivity: { [`${PRIVATE}:${privateTs}`]: {} },
+  });
+  try {
+    process.env.SLACK_USER_TOKEN = USER_TOKEN;
+    const state = await loadThanksSlackActivity("private-card", {
+      status: "announced",
+      ref: { channelId: PRIVATE, messageTs: privateTs },
+    });
+    if (state.status !== "blocked") throw new Error("expected a blocked card");
+    const said = describeSlackCardBlocker(state.blocker);
+    assert.deepStrictEqual(state.blocker, {
+      kind: "missing_scope",
+      scopes: ["groups:history"],
+      token: "user",
+    });
+    assert.match(said, /User Token Scopes/);
+  } finally {
+    delete process.env.SLACK_USER_TOKEN;
+    userScopeStub.restore();
   }
 
   // `/api/health` should be able to answer "is this install current?" without

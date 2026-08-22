@@ -40,6 +40,12 @@ export type StubWorkspace = {
   refuse?: Record<string, { error: string; needed?: string }>;
   /** Scopes `auth.test` reports in its `x-oauth-scopes` response header. */
   grantedScopes?: string[];
+  /**
+   * Refuse `reactions.get` and `conversations.replies` for any token that is
+   * not a member of the conversation, the way Slack does. Off by default so
+   * tests that only care about parsing need not describe a whole workspace.
+   */
+  enforceReadMembership?: boolean;
 };
 
 export type StubMessageActivity = {
@@ -136,6 +142,11 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
     ...(workspace.messageActivity ?? {}),
   };
   let nextTs = 1_700_000_000;
+
+  const refusesRead = (channel: string, token: string) =>
+    Boolean(
+      workspace.enforceReadMembership && !workspace.channels[channel]?.[token]
+    );
 
   globalThis.fetch = (async (
     input: Parameters<typeof fetch>[0],
@@ -294,6 +305,9 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
     if (url.endsWith("/reactions.get")) {
       const channel = params.get("channel") ?? "";
       const ts = params.get("timestamp") ?? "";
+      if (refusesRead(channel, token)) {
+        return jsonResponse({ ok: false, error: "not_in_channel" });
+      }
       const posted = messages.find(
         (message) => message.channel === channel && message.ts === ts
       );
@@ -318,6 +332,9 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
     if (url.endsWith("/conversations.replies")) {
       const channel = params.get("channel") ?? "";
       const ts = params.get("ts") ?? "";
+      if (refusesRead(channel, token)) {
+        return jsonResponse({ ok: false, error: "not_in_channel" });
+      }
       const posted = messages.find(
         (message) => message.channel === channel && message.ts === ts
       );
