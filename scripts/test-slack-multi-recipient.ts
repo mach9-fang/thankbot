@@ -9,6 +9,7 @@
 import assert from "assert";
 import { loadEnvFile } from "./load-env";
 import {
+  announcementGifUrl,
   installSlackStub,
   RESPONSE_URL,
   waitForSlackAnnouncement,
@@ -157,9 +158,14 @@ async function main() {
     assert.match(
       reply,
       new RegExp(
-        `^:pray: Fang Lee thanked \\*[^*]+\\*, \\*[^*]+\\*, and \\*[^*]+\\*: ${REASON} — <[^|>]+\\|View card>$`
+        `^:pray: Fang Lee thanked <@${NIYA}>, <@${ANTHONY}>, and <@${CHRIS}>: ${REASON} — <[^|>]+\\|View card>$`
       ),
       `${label}: ${reply}`
+    );
+    assert.match(
+      announcementGifUrl(stub) ?? "",
+      /\/thanks\/[^/]+\/card\.gif$/,
+      `${label}: expected a card GIF in ${reply}`
     );
 
     assert.strictEqual(stub.messages.length, 1, `${label}: posted as the bot`);

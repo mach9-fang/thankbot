@@ -20,7 +20,11 @@ export const PUBLIC_PATHS = [
   "/api/health",
 ];
 
+/** Slack's crawler has no Google session; the GIF only repeats the in-channel card. */
+const PUBLIC_THANKS_CARD_GIF = /^\/thanks\/[^/]+\/card\.gif$/;
+
 export function isPublicPath(pathname: string): boolean {
+  if (PUBLIC_THANKS_CARD_GIF.test(pathname)) return true;
   return PUBLIC_PATHS.some(
     (path) => pathname === path || pathname.startsWith(`${path}/`)
   );

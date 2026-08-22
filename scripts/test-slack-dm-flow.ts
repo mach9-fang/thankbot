@@ -9,6 +9,7 @@ import assert from "assert";
 import crypto from "crypto";
 import { loadEnvFile } from "./load-env";
 import {
+  announcementGifUrl,
   installSlackStub,
   RESPONSE_URL,
   waitForSlackAnnouncement,
@@ -63,6 +64,10 @@ async function main() {
   assert.ok(
     !isPublicPath("/thanks/some-id"),
     "card pages on the website stay behind sign-in"
+  );
+  assert.ok(
+    isPublicPath("/thanks/some-id/card.gif"),
+    "Slack must be able to fetch the card GIF without a Google session"
   );
 
   async function removeTestPeople() {
@@ -174,7 +179,7 @@ async function main() {
   const dmReply = await runSlash("D_WITH_TEAMMATE", "for covering standup");
   assert.match(
     dmReply,
-    /^:pray: Dana Sender thanked \*Riley Teammate\*: covering standup — <[^|>]+\|View card>$/
+    /^:pray: Dana Sender thanked <@U_DM_TEAMMATE>: covering standup — <[^|>]+\|View card>$/
   );
 
   const links = dmReply.match(/<[^|>]+\|View card>/g) ?? [];
@@ -182,6 +187,11 @@ async function main() {
     links.length,
     1,
     `expected one "View card" link in: ${dmReply}`
+  );
+  assert.match(
+    announcementGifUrl(stub) ?? "",
+    /\/thanks\/[^/]+\/card\.gif$/,
+    "expected a card GIF on the in-channel fallback"
   );
 
   const cards = await cardsFromSender();
@@ -245,7 +255,7 @@ async function main() {
   });
   assert.match(
     signedReply,
-    /^:pray: Dana Sender thanked \*Riley Teammate\*: covering standup — <[^|>]+\|View card>$/
+    /^:pray: Dana Sender thanked <@U_DM_TEAMMATE>: covering standup — <[^|>]+\|View card>$/
   );
   assert.strictEqual(
     (await cardsFromSender()).length,

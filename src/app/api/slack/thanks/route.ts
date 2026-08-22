@@ -6,12 +6,15 @@ import {
   createSlackThanks,
   upsertPersonBySlackId,
 } from "@/lib/db";
+import { emojifyText } from "@/lib/emoji";
 import { formatNameList } from "@/lib/format";
 import { siteUrl } from "@/lib/supabase/env";
+import { renderThanksCardGifForId } from "@/lib/thanks-card-gif";
 import {
   fetchSlackUser,
   formatMissingRecipientHint,
   formatSkippedRecipients,
+  formatSlackThanksText,
   listChannelHumanMembers,
   listChannelMemberIds,
   findSlackAnnouncement,
@@ -20,6 +23,8 @@ import {
   postSlackResponse,
   resolveHandlesToUserIds,
   resolveSoleChannelPeer,
+  slackThanksCardBlocks,
+  thanksCardGifPath,
   verifySlackRequest,
   type ParsedThanksText,
   type SkippedRecipient,
@@ -186,7 +191,11 @@ async function recordThanks(
       email: senderSlack?.email ?? null,
     });
 
-    const recipients: Array<{ id: string; name: string }> = [];
+    const recipients: Array<{
+      id: string;
+      name: string;
+      slackUserId: string;
+    }> = [];
 
     for (const recipientId of recipientIds) {
       if (!ALLOW_SELF_THANKS && recipientId === slash.user_id) {
@@ -213,7 +222,11 @@ async function recordThanks(
         email: recipientSlack.email ?? null,
       });
 
-      recipients.push({ id: recipient.id, name: recipient.name });
+      recipients.push({
+        id: recipient.id,
+        name: recipient.name,
+        slackUserId: recipientId,
+      });
     }
 
     const skipNote = formatSkippedRecipients(skipped);
@@ -244,18 +257,40 @@ async function recordThanks(
       return;
     }
 
-    const receivedNames = formatNameList(
-      recipients.map(({ name }) => `*${name}*`)
-    );
-    const url = `${siteUrl()}/thanks/${result.thanks.id}`;
-    const body = `:pray: ${sender.name} thanked ${receivedNames}: ${reason} — <${url}|View card>`;
+    const cardUrl = `${siteUrl()}/thanks/${result.thanks.id}`;
+    const gifUrl = `${siteUrl()}${thanksCardGifPath(result.thanks.id)}`;
+    const body = formatSlackThanksText({
+      senderName: sender.name,
+      recipientSlackIds: recipients.map(({ slackUserId }) => slackUserId),
+      reason,
+      cardUrl,
+    });
+    const altText = `${sender.name} thanked ${formatNameList(
+      recipients.map(({ name }) => name)
+    )}: ${reason}`;
 
-    const posted = await postSlackMessage(slash.channel_id, body, botToken);
+    try {
+      await renderThanksCardGifForId(result.thanks.id, {
+        fromName: sender.name,
+        toNames: recipients.map(({ name }) => name),
+        reason: emojifyText(reason),
+      });
+    } catch (error) {
+      console.error("Could not pre-render the thank-you card GIF", error);
+    }
+
+    const blocks = slackThanksCardBlocks({ text: body, gifUrl, altText });
+    const posted = await postSlackMessage(
+      slash.channel_id,
+      body,
+      botToken,
+      blocks
+    );
     let messageTs = posted?.messageTs ?? null;
     const channelId = posted?.channelId ?? slash.channel_id;
 
     if (!posted) {
-      await postSlackResponse(slash.response_url, body);
+      await postSlackResponse(slash.response_url, body, true, blocks);
       if (slash.channel_id) {
         messageTs = await findSlackAnnouncement(
           slash.channel_id,

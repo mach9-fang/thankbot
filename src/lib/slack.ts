@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { emojifyText } from "./emoji";
+import { formatNameList } from "./format";
 
 export type SlackSlashPayload = {
   token?: string;
@@ -570,6 +571,61 @@ export function formatSkippedRecipients(skipped: SkippedRecipient[]): string {
   return `Skipped: ${lines.join("; ")}.`;
 }
 
+export type SlackBlock =
+  | {
+      type: "section";
+      text: { type: "mrkdwn"; text: string };
+    }
+  | {
+      type: "image";
+      image_url: string;
+      alt_text: string;
+    };
+
+/** Public GIF Slack's crawler fetches after `/thanks` is recorded. */
+export function thanksCardGifPath(thanksId: string): string {
+  return `/thanks/${thanksId}/card.gif`;
+}
+
+/**
+ * In-channel confirmation: receivers are Slack mentions so they get pinged,
+ * plus a link to the card on the board.
+ */
+export function formatSlackThanksText(input: {
+  senderName: string;
+  recipientSlackIds: string[];
+  reason: string;
+  cardUrl: string;
+}): string {
+  const received = formatNameList(
+    input.recipientSlackIds.map((id) => `<@${id}>`)
+  );
+  return `:pray: ${input.senderName} thanked ${received}: ${input.reason} — <${input.cardUrl}|View card>`;
+}
+
+export function slackThanksCardBlocks(input: {
+  text: string;
+  gifUrl: string;
+  altText: string;
+}): SlackBlock[] {
+  const altText =
+    input.altText.length > 2000
+      ? `${input.altText.slice(0, 1999)}…`
+      : input.altText;
+
+  return [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: input.text },
+    },
+    {
+      type: "image",
+      image_url: input.gifUrl,
+      alt_text: altText,
+    },
+  ];
+}
+
 /**
  * Slack only waits 3 seconds for a slash command, so the real work replies
  * later through the command's `response_url`.
@@ -577,7 +633,8 @@ export function formatSkippedRecipients(skipped: SkippedRecipient[]): string {
 export async function postSlackResponse(
   responseUrl: string | undefined,
   text: string,
-  inChannel = true
+  inChannel = true,
+  blocks?: SlackBlock[]
 ): Promise<void> {
   if (!responseUrl) {
     return;
@@ -590,6 +647,7 @@ export async function postSlackResponse(
       body: JSON.stringify({
         response_type: inChannel ? "in_channel" : "ephemeral",
         text,
+        ...(blocks && blocks.length > 0 ? { blocks } : {}),
       }),
       cache: "no-store",
     });
@@ -611,20 +669,26 @@ export type PostedSlackMessage = {
 export async function postSlackMessage(
   channelId: string | undefined,
   text: string,
-  botToken: string
+  botToken: string,
+  blocks?: SlackBlock[]
 ): Promise<PostedSlackMessage | null> {
   if (!channelId || !botToken) {
     return null;
   }
 
   try {
+    const params = new URLSearchParams({ channel: channelId, text });
+    if (blocks && blocks.length > 0) {
+      params.set("blocks", JSON.stringify(blocks));
+    }
+
     const res = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${botToken}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({ channel: channelId, text }),
+      body: params,
       cache: "no-store",
     });
 

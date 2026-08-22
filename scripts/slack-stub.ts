@@ -41,9 +41,18 @@ export type StubMessageActivity = {
 
 export type SlackStub = {
   /** Messages ThankBot posted back through `response_url`. */
-  replies: Array<{ text: string; responseType: string }>;
+  replies: Array<{
+    text: string;
+    responseType: string;
+    blocks: unknown[];
+  }>;
   /** Channel announcements posted with `chat.postMessage`. */
-  messages: Array<{ channel: string; ts: string; text: string }>;
+  messages: Array<{
+    channel: string;
+    ts: string;
+    text: string;
+    blocks: unknown[];
+  }>;
   /** Slack Web API methods invoked, e.g. `chat.postMessage`. */
   calls: string[];
   setActivity: (
@@ -85,6 +94,25 @@ export async function waitForSlackAnnouncement(
   throw new Error("ThankBot never announced the thanks");
 }
 
+export function announcementGifUrl(stub: SlackStub): string | undefined {
+  const blocks = [
+    ...(stub.messages[0]?.blocks ?? []),
+    ...(stub.replies.find((reply) => reply.responseType === "in_channel")
+      ?.blocks ?? []),
+    ...(stub.replies[0]?.blocks ?? []),
+  ];
+  const gif = blocks.find(
+    (block): block is { type: string; image_url: string } =>
+      Boolean(
+        block &&
+          typeof block === "object" &&
+          (block as { type?: string }).type === "image" &&
+          typeof (block as { image_url?: string }).image_url === "string"
+      )
+  );
+  return gif?.image_url;
+}
+
 export function installSlackStub(workspace: StubWorkspace): SlackStub {
   const realFetch = globalThis.fetch;
   const replies: SlackStub["replies"] = [];
@@ -110,10 +138,12 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
       const payload = JSON.parse(String(init?.body ?? "{}")) as {
         text?: string;
         response_type?: string;
+        blocks?: unknown[];
       };
       replies.push({
         text: payload.text ?? "",
         responseType: payload.response_type ?? "",
+        blocks: payload.blocks ?? [],
       });
       return jsonResponse({ ok: true });
     }
@@ -187,7 +217,22 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
       }
       nextTs += 1;
       const ts = `${nextTs}.000001`;
-      messages.push({ channel, ts, text: params.get("text") ?? "" });
+      let blocks: unknown[] = [];
+      const rawBlocks = params.get("blocks");
+      if (rawBlocks) {
+        try {
+          const parsed = JSON.parse(rawBlocks) as unknown;
+          if (Array.isArray(parsed)) blocks = parsed;
+        } catch {
+          blocks = [];
+        }
+      }
+      messages.push({
+        channel,
+        ts,
+        text: params.get("text") ?? "",
+        blocks,
+      });
       return jsonResponse({ ok: true, channel, ts });
     }
 

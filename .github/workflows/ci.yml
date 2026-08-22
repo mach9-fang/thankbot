@@ -56,5 +56,6 @@ jobs:
           pnpm tsx scripts/test-parse.ts
           pnpm tsx scripts/test-recipient-list.ts
           pnpm tsx scripts/test-slack-recipients.ts
+          pnpm tsx scripts/test-slack-card-gif.ts
           pnpm tsx scripts/test-slack-card-activity.ts
           pnpm tsx scripts/test-time-range.ts

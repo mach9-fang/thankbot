@@ -12,6 +12,7 @@ import assert from "assert";
 import { createClient } from "@supabase/supabase-js";
 import { loadEnvFile } from "./load-env";
 import {
+  announcementGifUrl,
   installSlackStub,
   RESPONSE_URL,
   waitForSlackAnnouncement,
@@ -272,8 +273,13 @@ async function main() {
   );
   assert.match(
     slashReply,
-    /^:pray: Sam Slack thanked \*Wren Writer\*: unblocking the deploy — <[^|>]+\|View card>$/,
+    /^:pray: Sam Slack thanked <@U_WRITE_SLASH_RECIPIENT>: unblocking the deploy — <[^|>]+\|View card>$/,
     `unexpected Slack reply: ${slashReply}`
+  );
+  assert.match(
+    announcementGifUrl(stub) ?? "",
+    /\/thanks\/[^/]+\/card\.gif$/,
+    "Slack should attach the thank-you card GIF"
   );
 
   assert.strictEqual(stub.messages.length, 1, "announce the card as the bot");

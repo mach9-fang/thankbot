@@ -16,6 +16,8 @@
     "@vercel/functions": "^3.7.6",
     "canvas-confetti": "^1.9.4",
     "emoji-toolkit": "^10.0.0",
+    "fast-png": "^8.0.0",
+    "gifenc": "^1.0.3",
     "next": "^14.2.35",
     "react": "^18",
     "react-dom": "^18"
