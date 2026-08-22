@@ -22,6 +22,10 @@ export type StubWorkspace = {
   tokenOwners?: Record<string, string>;
   /** Emoji and thread replies keyed by `${channel}:${ts}`. */
   messageActivity?: Record<string, StubMessageActivity>;
+  /** Channel ids where `chat.postMessage` is refused even if the bot is a member. */
+  denyPostMessage?: string[];
+  /** Recent messages `conversations.history` returns, keyed by channel. */
+  history?: Record<string, Array<{ ts: string; text: string }>>;
 };
 
 export type StubMessageActivity = {
@@ -174,6 +178,9 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
 
     if (url.endsWith("/chat.postMessage")) {
       const channel = params.get("channel") ?? "";
+      if (workspace.denyPostMessage?.includes(channel)) {
+        return jsonResponse({ ok: false, error: "cannot_post" });
+      }
       const members = workspace.channels[channel]?.[token];
       if (!members) {
         return jsonResponse({ ok: false, error: "not_in_channel" });
@@ -182,6 +189,19 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
       const ts = `${nextTs}.000001`;
       messages.push({ channel, ts, text: params.get("text") ?? "" });
       return jsonResponse({ ok: true, channel, ts });
+    }
+
+    if (url.endsWith("/conversations.history")) {
+      const channel = params.get("channel") ?? "";
+      const members = workspace.channels[channel]?.[token];
+      if (!members) {
+        return jsonResponse({ ok: false, error: "channel_not_found" });
+      }
+      const posted = messages
+        .filter((message) => message.channel === channel)
+        .map((message) => ({ ts: message.ts, text: message.text }));
+      const seeded = workspace.history?.[channel] ?? [];
+      return jsonResponse({ ok: true, messages: [...posted, ...seeded] });
     }
 
     if (url.endsWith("/reactions.get")) {

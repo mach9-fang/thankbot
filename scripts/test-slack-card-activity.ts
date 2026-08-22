@@ -40,6 +40,7 @@ const stub = installSlackStub({
 async function main() {
   const {
     fetchSlackCardActivity,
+    findSlackAnnouncement,
     postSlackMessage,
     slackTsToIso,
   } = await import("../src/lib/slack");
@@ -63,18 +64,20 @@ async function main() {
   stub.reset();
   stub.calls.length = 0;
 
-  const empty = await loadThanksSlackActivity(null);
+  const empty = await loadThanksSlackActivity("card-id", null);
   assert.strictEqual(empty, null);
   assert.deepStrictEqual(
     stub.calls.filter((call) =>
-      call === "reactions.get" || call === "conversations.replies"
+      call === "reactions.get" ||
+      call === "conversations.replies" ||
+      call === "conversations.history"
     ),
     [],
     "a card with no Slack message must not call Slack"
   );
 
   delete process.env.SLACK_BOT_TOKEN;
-  const noToken = await loadThanksSlackActivity({
+  const noToken = await loadThanksSlackActivity("card-id", {
     channelId: CHANNEL,
     messageTs: "111.001",
   });
@@ -128,6 +131,45 @@ async function main() {
     formatSlackReplyText("Hi <@U_UNKNOWN|pat>", new Map()),
     "Hi pat"
   );
+
+  stub.restore();
+  const recoveredTs = "222.001";
+  const recoverId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const recoverStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: { [CHANNEL]: { [BOT]: [SENDER] } },
+    denyPostMessage: [CHANNEL],
+    history: {
+      [CHANNEL]: [
+        {
+          ts: recoveredTs,
+          text: `:pray: Sam thanked *Riley*: recovered — <https://example.com/thanks/${recoverId}|View card>`,
+        },
+      ],
+    },
+    messageActivity: {
+      [`${CHANNEL}:${recoveredTs}`]: {
+        reactions: [{ name: "eyes", users: [SENDER] }],
+      },
+    },
+  });
+  try {
+    const denied = await postSlackMessage(CHANNEL, "should fail", BOT);
+    assert.strictEqual(denied, null, "denied channels must not post as the bot");
+
+    const found = await findSlackAnnouncement(CHANNEL, recoverId, BOT);
+    assert.strictEqual(found, recoveredTs);
+
+    const recovered = await loadThanksSlackActivity(recoverId, {
+      channelId: CHANNEL,
+      messageTs: null,
+    });
+    assert.ok(recovered, "card view should recover the slash-command announcement");
+    assert.strictEqual(recovered.reactions[0].name, "eyes");
+    assert.ok(recoverStub.calls.includes("conversations.history"));
+  } finally {
+    recoverStub.restore();
+  }
 
   console.log("slack card activity tests passed");
 }

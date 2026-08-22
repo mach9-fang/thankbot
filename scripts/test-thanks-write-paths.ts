@@ -331,7 +331,7 @@ async function main() {
         "recording a thanks must not read Slack reactions or replies"
       );
 
-      const activity = await loadThanksSlackActivity({
+      const activity = await loadThanksSlackActivity(slackCard.id, {
         channelId: SLASH_CHANNEL,
         messageTs: stub.messages[0].ts,
       });

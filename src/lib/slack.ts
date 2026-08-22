@@ -632,9 +632,11 @@ export async function postSlackMessage(
       ok: boolean;
       channel?: string;
       ts?: string;
+      error?: string;
     };
 
     if (!data.ok || !data.channel || !data.ts) {
+      console.warn(`chat.postMessage failed: ${data.error ?? "unknown_error"}`);
       return null;
     }
 
@@ -681,6 +683,40 @@ export async function fetchSlackCardActivity(
   ]);
 
   return { reactions, replies };
+}
+
+/**
+ * Find the announcement people actually react to after a `response_url`
+ * fallback. Matches the card URL in recent history.
+ */
+export async function findSlackAnnouncement(
+  channelId: string,
+  thanksId: string,
+  botToken: string
+): Promise<string | null> {
+  if (!channelId || !thanksId || !botToken) {
+    return null;
+  }
+
+  const data = (await slackApi("conversations.history", botToken, {
+    channel: channelId,
+    limit: "30",
+  })) as {
+    ok?: boolean;
+    messages?: Array<{ ts?: string; text?: string }>;
+  } | null;
+
+  if (!data?.ok || !data.messages) {
+    return null;
+  }
+
+  const needle = `/thanks/${thanksId}`;
+  for (const message of data.messages) {
+    if (message.ts && message.text?.includes(needle)) {
+      return message.ts;
+    }
+  }
+  return null;
 }
 
 async function slackApi(

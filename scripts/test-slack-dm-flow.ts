@@ -194,7 +194,11 @@ async function main() {
     .eq("id", cards[0].id)
     .maybeSingle();
   if (!dmIdentity.error) {
-    assert.strictEqual(dmIdentity.data?.slack_channel_id, null);
+    assert.strictEqual(
+      dmIdentity.data?.slack_channel_id,
+      "D_WITH_TEAMMATE",
+      "remember the conversation even when the bot cannot post into it"
+    );
     assert.strictEqual(dmIdentity.data?.slack_message_ts, null);
   }
   assert.strictEqual(stub.messages.length, 0);

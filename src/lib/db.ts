@@ -730,10 +730,10 @@ export async function createSlackThanks(input: {
 
 export type ThanksSlackRef = {
   channelId: string;
-  messageTs: string;
+  messageTs: string | null;
 };
 
-/** Slack message that announced this card, if ThankBot posted it as the bot. */
+/** Slack conversation that announced this card, and the message ts when known. */
 export async function getThanksSlackRef(
   id: string
 ): Promise<ThanksSlackRef | null> {
@@ -748,12 +748,12 @@ export async function getThanksSlackRef(
     if (isMissingSlackIdentityColumn(error)) return null;
     throw new Error(error.message);
   }
-  if (!data?.slack_channel_id || !data?.slack_message_ts) {
+  if (!data?.slack_channel_id) {
     return null;
   }
   return {
     channelId: data.slack_channel_id as string,
-    messageTs: data.slack_message_ts as string,
+    messageTs: (data.slack_message_ts as string | null) ?? null,
   };
 }
 
@@ -761,19 +761,28 @@ export async function getThanksSlackRef(
 export async function attachSlackMessage(
   thanksId: string,
   channelId: string,
-  messageTs: string
+  messageTs?: string | null
 ): Promise<void> {
-  const supabase = createServiceSupabase();
-  const { error } = await supabase
-    .from("thanks")
-    .update({
+  try {
+    const supabase = createServiceSupabase();
+    const fields: { slack_channel_id: string; slack_message_ts?: string } = {
       slack_channel_id: channelId,
-      slack_message_ts: messageTs,
-    })
-    .eq("id", thanksId);
+    };
+    if (messageTs) fields.slack_message_ts = messageTs;
 
-  if (error && !isMissingSlackIdentityColumn(error)) {
-    console.warn("Could not store Slack message identity:", error.message);
+    const { error } = await supabase
+      .from("thanks")
+      .update(fields)
+      .eq("id", thanksId);
+
+    if (error && !isMissingSlackIdentityColumn(error)) {
+      console.warn("Could not store Slack message identity:", error.message);
+    }
+  } catch (error) {
+    console.warn(
+      "Could not store Slack message identity:",
+      error instanceof Error ? error.message : error
+    );
   }
 }
 

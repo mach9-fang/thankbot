@@ -1,6 +1,6 @@
-import { peopleBySlackIds, type ThanksSlackRef } from "./db";
+import { attachSlackMessage, peopleBySlackIds, type ThanksSlackRef } from "./db";
 import { emojifyText } from "./emoji";
-import { fetchSlackCardActivity } from "./slack";
+import { fetchSlackCardActivity, findSlackAnnouncement } from "./slack";
 import type { PersonSummary, SlackCardActivity, SlackCardComment } from "./types";
 
 /**
@@ -9,6 +9,7 @@ import type { PersonSummary, SlackCardActivity, SlackCardComment } from "./types
  * Only the thank-you card page should call this — it talks to Slack.
  */
 export async function loadThanksSlackActivity(
+  thanksId: string,
   ref: ThanksSlackRef | null
 ): Promise<SlackCardActivity | null> {
   if (!ref) return null;
@@ -16,11 +17,16 @@ export async function loadThanksSlackActivity(
   const botToken = process.env.SLACK_BOT_TOKEN ?? "";
   if (!botToken) return null;
 
-  const raw = await fetchSlackCardActivity(
-    ref.channelId,
-    ref.messageTs,
-    botToken
-  );
+  let messageTs = ref.messageTs;
+  if (!messageTs) {
+    messageTs = await findSlackAnnouncement(ref.channelId, thanksId, botToken);
+    if (messageTs) {
+      await attachSlackMessage(thanksId, ref.channelId, messageTs);
+    }
+  }
+  if (!messageTs) return null;
+
+  const raw = await fetchSlackCardActivity(ref.channelId, messageTs, botToken);
 
   if (raw.reactions.length === 0 && raw.replies.length === 0) {
     return null;

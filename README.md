@@ -20,7 +20,11 @@ teammate, and everyone sees it on the feed.
    card with `chat.postMessage` and stores that message's channel and timestamp
    so the thank-you card page can load Slack emoji and thread replies (the feed
    does not call Slack). If the bot cannot post, it falls back to the slash
-   command's `response_url` and the card stays text-only. List people however
+   command's `response_url` and then tries to find that announcement in
+   history. Cards posted before this is deployed have no Slack identity, so
+   their emoji will not appear until you send a new `/thanks`. Slack keeps
+   calling whichever deployment the slash command Request URL points at.
+   List people however
    you'd write them — `@alice, @bob`, `@alice, @bob, and @carol`, `@alice; @bob`,
    `@alice & @bob` — the separators belong to the list, not to the reason. You
    can thank a whole channel with `/thanks everyone for …`, and omit the mention

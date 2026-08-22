@@ -14,6 +14,7 @@ import {
   formatSkippedRecipients,
   listChannelHumanMembers,
   listChannelMemberIds,
+  findSlackAnnouncement,
   parseThanksText,
   postSlackMessage,
   postSlackResponse,
@@ -250,14 +251,22 @@ async function recordThanks(
     const body = `:pray: ${sender.name} thanked ${receivedNames}: ${reason} — <${url}|View card>`;
 
     const posted = await postSlackMessage(slash.channel_id, body, botToken);
-    if (posted) {
-      await attachSlackMessage(
-        result.thanks.id,
-        posted.channelId,
-        posted.messageTs
-      );
-    } else {
+    let messageTs = posted?.messageTs ?? null;
+    const channelId = posted?.channelId ?? slash.channel_id;
+
+    if (!posted) {
       await postSlackResponse(slash.response_url, body);
+      if (slash.channel_id) {
+        messageTs = await findSlackAnnouncement(
+          slash.channel_id,
+          result.thanks.id,
+          botToken
+        );
+      }
+    }
+
+    if (channelId) {
+      await attachSlackMessage(result.thanks.id, channelId, messageTs);
     }
 
     if (skipNote) {
