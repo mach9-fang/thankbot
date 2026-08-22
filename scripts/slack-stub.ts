@@ -20,11 +20,38 @@ export type StubWorkspace = {
   channels: Record<string, Record<string, string[]>>;
   /** Which Slack user granted each user token, as `auth.test` reports. */
   tokenOwners?: Record<string, string>;
+  /** Emoji and thread replies keyed by `${channel}:${ts}`. */
+  messageActivity?: Record<string, StubMessageActivity>;
+  /** Channel ids where `chat.postMessage` is refused even if the bot is a member. */
+  denyPostMessage?: string[];
+  /** Recent messages `conversations.history` returns, keyed by channel. */
+  history?: Record<string, Array<{ ts: string; text: string }>>;
+};
+
+export type StubMessageActivity = {
+  reactions?: Array<{ name: string; users: string[] }>;
+  replies?: Array<{
+    ts: string;
+    user?: string;
+    text?: string;
+    bot_id?: string;
+    subtype?: string;
+  }>;
 };
 
 export type SlackStub = {
   /** Messages ThankBot posted back through `response_url`. */
   replies: Array<{ text: string; responseType: string }>;
+  /** Channel announcements posted with `chat.postMessage`. */
+  messages: Array<{ channel: string; ts: string; text: string }>;
+  /** Slack Web API methods invoked, e.g. `chat.postMessage`. */
+  calls: string[];
+  setActivity: (
+    channel: string,
+    ts: string,
+    activity: StubMessageActivity
+  ) => void;
+  reset: () => void;
   restore: () => void;
 };
 
@@ -37,9 +64,36 @@ function jsonResponse(payload: unknown) {
   });
 }
 
+export function messageKey(channel: string, ts: string) {
+  return `${channel}:${ts}`;
+}
+
+export async function waitForSlackAnnouncement(
+  stub: SlackStub,
+  timeoutMs = 10_000
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (stub.messages.length > 0) return stub.messages[0].text;
+    const inChannel = stub.replies.find(
+      (reply) => reply.responseType === "in_channel"
+    );
+    if (inChannel) return inChannel.text;
+    if (stub.replies.length > 0) return stub.replies[0].text;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("ThankBot never announced the thanks");
+}
+
 export function installSlackStub(workspace: StubWorkspace): SlackStub {
   const realFetch = globalThis.fetch;
   const replies: SlackStub["replies"] = [];
+  const messages: SlackStub["messages"] = [];
+  const calls: string[] = [];
+  const activity: Record<string, StubMessageActivity> = {
+    ...(workspace.messageActivity ?? {}),
+  };
+  let nextTs = 1_700_000_000;
 
   globalThis.fetch = (async (
     input: Parameters<typeof fetch>[0],
@@ -67,6 +121,8 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
     if (!url.startsWith("https://slack.com/api/")) {
       return realFetch(input, init);
     }
+
+    calls.push(url.replace("https://slack.com/api/", ""));
 
     const params = new URLSearchParams(String(init?.body ?? ""));
     const headers = new Headers(init?.headers);
@@ -120,11 +176,96 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
       return jsonResponse({ ok: true, members });
     }
 
+    if (url.endsWith("/chat.postMessage")) {
+      const channel = params.get("channel") ?? "";
+      if (workspace.denyPostMessage?.includes(channel)) {
+        return jsonResponse({ ok: false, error: "cannot_post" });
+      }
+      const members = workspace.channels[channel]?.[token];
+      if (!members) {
+        return jsonResponse({ ok: false, error: "not_in_channel" });
+      }
+      nextTs += 1;
+      const ts = `${nextTs}.000001`;
+      messages.push({ channel, ts, text: params.get("text") ?? "" });
+      return jsonResponse({ ok: true, channel, ts });
+    }
+
+    if (url.endsWith("/conversations.history")) {
+      const channel = params.get("channel") ?? "";
+      const members = workspace.channels[channel]?.[token];
+      if (!members) {
+        return jsonResponse({ ok: false, error: "channel_not_found" });
+      }
+      const posted = messages
+        .filter((message) => message.channel === channel)
+        .map((message) => ({ ts: message.ts, text: message.text }));
+      const seeded = workspace.history?.[channel] ?? [];
+      return jsonResponse({ ok: true, messages: [...posted, ...seeded] });
+    }
+
+    if (url.endsWith("/reactions.get")) {
+      const channel = params.get("channel") ?? "";
+      const ts = params.get("timestamp") ?? "";
+      const posted = messages.find(
+        (message) => message.channel === channel && message.ts === ts
+      );
+      const known = activity[messageKey(channel, ts)];
+      if (!posted && !known) {
+        return jsonResponse({ ok: false, error: "message_not_found" });
+      }
+      return jsonResponse({
+        ok: true,
+        type: "message",
+        message: {
+          ts,
+          reactions: (known?.reactions ?? []).map((row) => ({
+            name: row.name,
+            users: row.users,
+            count: row.users.length,
+          })),
+        },
+      });
+    }
+
+    if (url.endsWith("/conversations.replies")) {
+      const channel = params.get("channel") ?? "";
+      const ts = params.get("ts") ?? "";
+      const posted = messages.find(
+        (message) => message.channel === channel && message.ts === ts
+      );
+      const known = activity[messageKey(channel, ts)];
+      if (!posted && !known) {
+        return jsonResponse({ ok: false, error: "message_not_found" });
+      }
+      return jsonResponse({
+        ok: true,
+        messages: [
+          {
+            ts,
+            text: posted?.text ?? "",
+            user: "B_THANKBOT",
+          },
+          ...(known?.replies ?? []),
+        ],
+      });
+    }
+
     throw new Error(`Unexpected Slack API call in test: ${url}`);
   }) as typeof fetch;
 
   return {
     replies,
+    messages,
+    calls,
+    setActivity: (channel, ts, next) => {
+      activity[messageKey(channel, ts)] = next;
+    },
+    reset: () => {
+      replies.length = 0;
+      messages.length = 0;
+      calls.length = 0;
+    },
     restore: () => {
       globalThis.fetch = realFetch;
     },

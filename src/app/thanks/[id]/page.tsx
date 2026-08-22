@@ -3,11 +3,13 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { ConfettiOnOpen } from "@/components/ConfettiOnOpen";
+import { SlackCardActivity } from "@/components/SlackCardActivity";
 import { formatThanksWhen } from "@/components/ThanksCard";
 import { requireAuthUser } from "@/lib/auth";
-import { getThanks } from "@/lib/db";
+import { getThanks, getThanksSlackRef } from "@/lib/db";
 import { emojifyText } from "@/lib/emoji";
 import { formatNameList } from "@/lib/format";
+import { loadThanksSlackActivity } from "@/lib/slack-card";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +44,10 @@ export default async function ThanksPage({
   }
 
   const reason = emojifyText(thanks.reason);
+  const slackActivity = await loadThanksSlackActivity(
+    thanks.id,
+    await getThanksSlackRef(thanks.id)
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -119,6 +125,15 @@ export default async function ThanksPage({
             </span>
           </div>
         </div>
+
+        {slackActivity ? (
+          <SlackCardActivity activity={slackActivity} />
+        ) : thanks.source === "slack" ? (
+          <p className="border-t border-brand-100 bg-white/70 px-6 py-4 text-sm text-ink-400 sm:px-10">
+            Slack emoji and thread replies appear here when ThankBot can see
+            the announcement.
+          </p>
+        ) : null}
       </article>
     </div>
   );

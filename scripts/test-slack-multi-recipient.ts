@@ -8,7 +8,11 @@
  */
 import assert from "assert";
 import { loadEnvFile } from "./load-env";
-import { installSlackStub, RESPONSE_URL } from "./slack-stub";
+import {
+  installSlackStub,
+  RESPONSE_URL,
+  waitForSlackAnnouncement,
+} from "./slack-stub";
 
 loadEnvFile(".env.local");
 
@@ -105,16 +109,8 @@ async function main() {
     }));
   }
 
-  async function waitForReply() {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (stub.replies.length > 0) return stub.replies[0].text;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error("ThankBot never replied through response_url");
-  }
-
   async function runSlash(text: string) {
-    stub.replies.length = 0;
+    stub.reset();
 
     const body = new URLSearchParams({
       channel_id: CHANNEL,
@@ -135,7 +131,7 @@ async function main() {
     );
     assert.strictEqual(response.status, 200);
 
-    return waitForReply();
+    return waitForSlackAnnouncement(stub);
   }
 
   for (const [label, recipients] of RECIPIENT_LISTS) {
@@ -165,6 +161,25 @@ async function main() {
       ),
       `${label}: ${reply}`
     );
+
+    assert.strictEqual(stub.messages.length, 1, `${label}: posted as the bot`);
+    let posted = await supabase
+      .from("thanks")
+      .select("slack_channel_id, slack_message_ts")
+      .eq("id", board[0].id)
+      .maybeSingle();
+    for (let attempt = 0; attempt < 100 && !posted.error && !posted.data?.slack_message_ts; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      posted = await supabase
+        .from("thanks")
+        .select("slack_channel_id, slack_message_ts")
+        .eq("id", board[0].id)
+        .maybeSingle();
+    }
+    if (!posted.error) {
+      assert.strictEqual(posted.data?.slack_channel_id, CHANNEL, label);
+      assert.strictEqual(posted.data?.slack_message_ts, stub.messages[0].ts, label);
+    }
   }
 
   // A whole channel still shares one card.

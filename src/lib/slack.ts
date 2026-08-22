@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { emojifyText } from "./emoji";
 
 export type SlackSlashPayload = {
   token?: string;
@@ -595,4 +596,230 @@ export async function postSlackResponse(
   } catch {
     // Slack will have already shown the acknowledgement; nothing to recover.
   }
+}
+
+export type PostedSlackMessage = {
+  channelId: string;
+  messageTs: string;
+};
+
+/**
+ * Post as the bot so Slack returns the message `ts`. Needed later to load
+ * emoji and thread replies on the card. Returns null when ThankBot cannot
+ * post (not in the conversation, missing `chat:write`, etc.).
+ */
+export async function postSlackMessage(
+  channelId: string | undefined,
+  text: string,
+  botToken: string
+): Promise<PostedSlackMessage | null> {
+  if (!channelId || !botToken) {
+    return null;
+  }
+
+  try {
+    const res = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${botToken}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ channel: channelId, text }),
+      cache: "no-store",
+    });
+
+    const data = (await res.json()) as {
+      ok: boolean;
+      channel?: string;
+      ts?: string;
+      error?: string;
+    };
+
+    if (!data.ok || !data.channel || !data.ts) {
+      console.warn(`chat.postMessage failed: ${data.error ?? "unknown_error"}`);
+      return null;
+    }
+
+    return { channelId: data.channel, messageTs: data.ts };
+  } catch {
+    return null;
+  }
+}
+
+export type SlackMessageReaction = {
+  name: string;
+  emoji: string;
+  count: number;
+};
+
+export type SlackThreadReply = {
+  ts: string;
+  slackUserId: string;
+  text: string;
+  createdAt: string;
+};
+
+export type SlackCardActivityRaw = {
+  reactions: SlackMessageReaction[];
+  replies: SlackThreadReply[];
+};
+
+/**
+ * Emoji and thread replies on one Slack message. Two Web API calls; callers
+ * should only use this from the card page, not the feed.
+ */
+export async function fetchSlackCardActivity(
+  channelId: string,
+  messageTs: string,
+  botToken: string
+): Promise<SlackCardActivityRaw> {
+  if (!channelId || !messageTs || !botToken) {
+    return { reactions: [], replies: [] };
+  }
+
+  const [reactions, replies] = await Promise.all([
+    fetchSlackReactions(channelId, messageTs, botToken),
+    fetchSlackThreadReplies(channelId, messageTs, botToken),
+  ]);
+
+  return { reactions, replies };
+}
+
+/**
+ * Find the announcement people actually react to after a `response_url`
+ * fallback. Matches the card URL in recent history.
+ */
+export async function findSlackAnnouncement(
+  channelId: string,
+  thanksId: string,
+  botToken: string
+): Promise<string | null> {
+  if (!channelId || !thanksId || !botToken) {
+    return null;
+  }
+
+  const data = (await slackApi("conversations.history", botToken, {
+    channel: channelId,
+    limit: "30",
+  })) as {
+    ok?: boolean;
+    messages?: Array<{ ts?: string; text?: string }>;
+  } | null;
+
+  if (!data?.ok || !data.messages) {
+    return null;
+  }
+
+  const needle = `/thanks/${thanksId}`;
+  for (const message of data.messages) {
+    if (message.ts && message.text?.includes(needle)) {
+      return message.ts;
+    }
+  }
+  return null;
+}
+
+async function slackApi(
+  method: string,
+  botToken: string,
+  params: Record<string, string>
+): Promise<unknown | null> {
+  try {
+    const res = await fetch(`https://slack.com/api/${method}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${botToken}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams(params),
+      cache: "no-store",
+    });
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchSlackReactions(
+  channelId: string,
+  messageTs: string,
+  botToken: string
+): Promise<SlackMessageReaction[]> {
+  const data = (await slackApi("reactions.get", botToken, {
+    channel: channelId,
+    timestamp: messageTs,
+    full: "true",
+  })) as {
+    ok?: boolean;
+    message?: {
+      reactions?: Array<{ name?: string; count?: number; users?: string[] }>;
+    };
+  } | null;
+
+  if (!data?.ok) {
+    return [];
+  }
+
+  return (data.message?.reactions ?? [])
+    .filter((row) => row.name)
+    .map((row) => {
+      const name = row.name as string;
+      const shortcode = `:${name}:`;
+      return {
+        name,
+        emoji: emojifyText(shortcode),
+        count: row.count ?? row.users?.length ?? 0,
+      };
+    })
+    .filter((row) => row.count > 0);
+}
+
+async function fetchSlackThreadReplies(
+  channelId: string,
+  messageTs: string,
+  botToken: string
+): Promise<SlackThreadReply[]> {
+  const data = (await slackApi("conversations.replies", botToken, {
+    channel: channelId,
+    ts: messageTs,
+    limit: "50",
+  })) as {
+    ok?: boolean;
+    messages?: Array<{
+      ts?: string;
+      user?: string;
+      text?: string;
+      bot_id?: string;
+      subtype?: string;
+    }>;
+  } | null;
+
+  if (!data?.ok || !data.messages) {
+    return [];
+  }
+
+  return data.messages.flatMap((message) => {
+    if (!message.ts || message.ts === messageTs) return [];
+    if (message.bot_id || message.subtype) return [];
+    if (!message.user) return [];
+    const text = (message.text ?? "").trim();
+    if (!text) return [];
+    return [
+      {
+        ts: message.ts,
+        slackUserId: message.user,
+        text,
+        createdAt: slackTsToIso(message.ts),
+      },
+    ];
+  });
+}
+
+/** Slack timestamps are unix seconds with a unique suffix after the dot. */
+export function slackTsToIso(ts: string): string {
+  const seconds = Number(ts);
+  if (!Number.isFinite(seconds)) {
+    return new Date(0).toISOString();
+  }
+  return new Date(seconds * 1000).toISOString();
 }

@@ -18,6 +18,7 @@ export type SchemaHealth = {
     thank_recipients: boolean;
     create_thanks_card: boolean;
     people_with_stats: boolean;
+    slack_message_identity: boolean;
   };
   pendingMigrations: string[];
 };
@@ -37,9 +38,10 @@ export async function readSchemaHealth(): Promise<SchemaHealth> {
   // visitor is granted, so a missing grant cannot read as a missing table.
   const supabase = createServiceSupabase();
 
-  const [recipients, statsView, rpc] = await Promise.all([
+  const [recipients, statsView, slackIdentity, rpc] = await Promise.all([
     supabase.from("thank_recipients").select("thanks_id").limit(1),
     supabase.from("people_with_stats").select("id").limit(1),
+    supabase.from("thanks").select("slack_channel_id, slack_message_ts").limit(1),
     // An empty recipient list is refused by the function before it writes
     // anything, so this asks whether the function resolves without recording a
     // thanks. Only "not found" counts as missing; every other answer — a
@@ -56,6 +58,7 @@ export async function readSchemaHealth(): Promise<SchemaHealth> {
     thank_recipients: !recipients.error,
     people_with_stats: !statsView.error,
     create_thanks_card: !isMissingFunction(rpc.error),
+    slack_message_identity: !slackIdentity.error,
   };
 
   const pendingMigrations: string[] = [];
@@ -64,6 +67,9 @@ export async function readSchemaHealth(): Promise<SchemaHealth> {
   }
   if (!objects.people_with_stats) {
     pendingMigrations.push("0005_reexpose_board_to_data_api.sql");
+  }
+  if (!objects.slack_message_identity) {
+    pendingMigrations.push("0006_slack_message_identity.sql");
   }
 
   return {
