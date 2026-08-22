@@ -1,6 +1,6 @@
 /**
  * Slack's recorded-thanks reply: receivers are mentions, and the message
- * carries a 1-second thank-you card GIF. No database required.
+ * carries a 1-second looping thank-you card GIF. No database required.
  *
  * Run: pnpm tsx scripts/test-slack-card-gif.ts
  */

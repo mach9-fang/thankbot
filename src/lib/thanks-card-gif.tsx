@@ -55,7 +55,7 @@ export async function renderThanksCardGifForId(
   return bytes;
 }
 
-/** One-second thank-you card with confetti, encoded as a GIF that plays once. */
+/** One-second thank-you card with confetti. Slack loops the burst. */
 export async function renderThanksCardGif(
   card: ThanksCardGifInput
 ): Promise<Uint8Array> {
@@ -82,8 +82,8 @@ export async function renderThanksCardGif(
     gif.writeFrame(applyPalette(frame, palette), width, height, {
       palette,
       delay: THANKS_CARD_GIF_FRAME_DELAY_MS,
-      // Play the 1-second burst once; Slack then holds the last frame.
-      repeat: -1,
+      // 1-second cycle; Slack (and browsers) loop the burst.
+      repeat: 0,
     });
   }
   gif.finish();
@@ -306,28 +306,22 @@ function makeParticles(width: number, height: number, seed: number): Particle[] 
   const rand = mulberry32(seed);
   const shapes: Shape[] = ["rect", "circle", "star", "heart"];
   const particles: Particle[] = [];
+  // Burst from the heart between From/To so names stay readable at t=0.
+  const originX = width * 0.5;
+  const originY = height * 0.36;
 
-  for (let i = 0; i < 56; i++) {
-    const edge = rand();
-    const fromLeft = edge < 0.18;
-    const fromRight = edge > 0.82;
+  for (let i = 0; i < 64; i++) {
+    const angle = rand() * Math.PI * 2;
+    const speed = 80 + rand() * 220;
     particles.push({
-      x: fromLeft
-        ? -8
-        : fromRight
-          ? width + 8
-          : width * (0.18 + rand() * 0.64),
-      y: height * (0.12 + rand() * 0.38),
-      vx: fromLeft
-        ? 90 + rand() * 110
-        : fromRight
-          ? -(90 + rand() * 110)
-          : (rand() - 0.5) * 240,
-      vy: -(30 + rand() * 90),
-      size: 3.5 + rand() * 6.5,
+      x: originX + (rand() - 0.5) * 18,
+      y: originY + (rand() - 0.5) * 12,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed * 0.55 - (40 + rand() * 80),
+      size: 4 + rand() * 7,
       color: CONFETTI_COLORS[Math.floor(rand() * CONFETTI_COLORS.length)],
       shape: shapes[Math.floor(rand() * shapes.length)],
-      spin: (rand() - 0.5) * 10,
+      spin: (rand() - 0.5) * 12,
     });
   }
 
@@ -347,6 +341,8 @@ function drawConfetti(
     const y = particle.y + particle.vy * t + 0.5 * gravity * t * t;
     const rot = particle.spin * t;
     if (x < -12 || y < -12 || x > width + 12 || y > height + 12) continue;
+    // Keep From/To names readable — allow the burst through the heart only.
+    if (y > 52 && y < 128 && Math.abs(x - width / 2) > 46) continue;
 
     switch (particle.shape) {
       case "circle":
