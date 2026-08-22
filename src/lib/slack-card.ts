@@ -7,7 +7,10 @@ import { emojifyText } from "./emoji";
 import {
   fetchSlackCardActivity,
   findSlackAnnouncement,
+  SLACK_CARD_USER_SCOPES,
   type SlackApiProblem,
+  type SlackReadTokens,
+  type SlackTokenKind,
 } from "./slack";
 import type { PersonSummary, SlackCardActivity, SlackCardComment } from "./types";
 
@@ -20,11 +23,14 @@ export type SlackCardBlocker =
   | { kind: "no_token" }
   /** No Slack conversation recorded against the card at all. */
   | { kind: "not_recorded" }
-  /** ThankBot is not in the conversation, so Slack will not show it. */
-  | { kind: "not_a_member" }
-  /** ThankBot can read the conversation but its announcement is not there. */
+  /**
+   * Neither token is in the conversation. `userTokenConfigured` decides
+   * whether the fix is granting a user token or inviting the app.
+   */
+  | { kind: "not_a_member"; userTokenConfigured: boolean }
+  /** The conversation is readable but its announcement is not there. */
   | { kind: "announcement_missing" }
-  | { kind: "missing_scope"; scopes: string[] }
+  | { kind: "missing_scope"; scopes: string[]; token: SlackTokenKind }
   | { kind: "unreadable"; error: string };
 
 /**
@@ -64,17 +70,23 @@ export async function loadThanksSlackActivity(
     return blocked({ kind: "not_recorded" });
   }
 
-  const botToken = process.env.SLACK_BOT_TOKEN ?? "";
-  if (!botToken) {
+  const tokens: SlackReadTokens = {
+    bot: process.env.SLACK_BOT_TOKEN ?? "",
+    user: process.env.SLACK_USER_TOKEN || undefined,
+  };
+  if (!tokens.bot) {
     return blocked({ kind: "no_token" });
   }
+
+  const describe = (problems: SlackApiProblem[]) =>
+    blockerForProblems(problems, Boolean(tokens.user));
 
   const { channelId } = ref.ref;
   let messageTs = ref.ref.messageTs;
   if (!messageTs) {
-    const found = await findSlackAnnouncement(channelId, thanksId, botToken);
+    const found = await findSlackAnnouncement(channelId, thanksId, tokens);
     if (found.status === "unreadable") {
-      return blocked(blockerForProblems([found.problem]) ?? { kind: "not_a_member" });
+      return blocked(describe([found.problem]) ?? notAMember(tokens));
     }
     if (found.status === "missing") {
       return blocked({ kind: "announcement_missing" });
@@ -83,8 +95,8 @@ export async function loadThanksSlackActivity(
     await attachSlackMessage(thanksId, channelId, messageTs);
   }
 
-  const raw = await fetchSlackCardActivity(channelId, messageTs, botToken);
-  const blocker = blockerForProblems(raw.problems);
+  const raw = await fetchSlackCardActivity(channelId, messageTs, tokens);
+  const blocker = describe(raw.problems);
 
   if (raw.reactions.length === 0 && raw.replies.length === 0) {
     return blocker ? blocked(blocker) : { status: "quiet" };
@@ -109,23 +121,34 @@ function blocked(blocker: SlackCardBlocker): SlackCardState {
   return { status: "blocked", blocker };
 }
 
+function notAMember(tokens: SlackReadTokens): SlackCardBlocker {
+  return { kind: "not_a_member", userTokenConfigured: Boolean(tokens.user) };
+}
+
 /** Missing scopes are the most fixable case, so they win over anything else. */
 function blockerForProblems(
-  problems: SlackApiProblem[]
+  problems: SlackApiProblem[],
+  userTokenConfigured: boolean
 ): SlackCardBlocker | null {
   if (problems.length === 0) return null;
 
-  const scopes = Array.from(
-    new Set(
-      problems
-        .filter((problem) => problem.error === "missing_scope")
-        .flatMap((problem) => (problem.needed ?? "").split(","))
-        .map((scope) => scope.trim())
-        .filter(Boolean)
-    )
+  const missingScope = problems.filter(
+    (problem) => problem.error === "missing_scope"
   );
-  if (scopes.length > 0) {
-    return { kind: "missing_scope", scopes };
+  if (missingScope.length > 0) {
+    const token = missingScope[0].token;
+    const scopes = Array.from(
+      new Set(
+        missingScope
+          .filter((problem) => problem.token === token)
+          .flatMap((problem) => (problem.needed ?? "").split(","))
+          .map((scope) => scope.trim())
+          .filter(Boolean)
+      )
+    );
+    if (scopes.length > 0) {
+      return { kind: "missing_scope", scopes, token };
+    }
   }
 
   if (
@@ -135,7 +158,7 @@ function blockerForProblems(
         problem.error === "channel_not_found"
     )
   ) {
-    return { kind: "not_a_member" };
+    return { kind: "not_a_member", userTokenConfigured };
   }
 
   return { kind: "unreadable", error: problems[0].error };
@@ -151,16 +174,21 @@ export function describeSlackCardBlocker(blocker: SlackCardBlocker): string {
     case "not_recorded":
       return "ThankBot did not record a Slack conversation for this card, so there is no message to read.";
     case "not_a_member":
-      return "ThankBot is not in this Slack conversation, and Slack only shows an app the emoji and replies in conversations it belongs to. With the channels:join scope ThankBot adds itself to public channels on its own; a private channel or a DM needs /invite @ThankBot.";
+      return blocker.userTokenConfigured
+        ? "Neither ThankBot nor the Slack account behind SLACK_USER_TOKEN is in this conversation, so Slack will not show its emoji or replies. Grant that token from an account that is in the room, or invite ThankBot to it."
+        : `Slack never lets an app read a conversation it is not in, and it cannot add itself to a private channel or a DM. Set SLACK_USER_TOKEN with the ${formatScopeList(
+            [...SLACK_CARD_USER_SCOPES]
+          )} user scopes and ThankBot reads the thread with the installer's own access instead — no invites anywhere.`;
     case "announcement_missing":
       return "ThankBot could not find its announcement in this conversation's recent messages — it may have been deleted.";
     case "missing_scope": {
       const plural = blocker.scopes.length > 1;
+      const list = blocker.token === "user" ? "User" : "Bot";
       return `ThankBot's Slack app is missing the ${formatScopeList(
         blocker.scopes
-      )} scope${plural ? "s" : ""}. Add ${
+      )} ${blocker.token} scope${plural ? "s" : ""}. Add ${
         plural ? "them" : "it"
-      } under OAuth & Permissions, then reinstall the app to the workspace.`;
+      } under OAuth & Permissions → ${list} Token Scopes, then reinstall the app to the workspace.`;
     }
     case "unreadable":
       return describeSlackError(blocker.error);

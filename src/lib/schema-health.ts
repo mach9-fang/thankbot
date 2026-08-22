@@ -1,4 +1,8 @@
-import { checkSlackToken, type SlackTokenCheck } from "./slack";
+import {
+  checkSlackToken,
+  SLACK_CARD_USER_SCOPES,
+  type SlackTokenCheck,
+} from "./slack";
 import { createServiceSupabase } from "./supabase/admin";
 
 /**
@@ -27,7 +31,13 @@ export type SchemaHealth = {
     slack_message_identity: boolean;
   };
   pendingMigrations: string[];
-  slack: SlackTokenCheck;
+  slack: SlackTokenCheck & {
+    /**
+     * The optional user token, which reads conversations ThankBot is not in.
+     * Absent when `SLACK_USER_TOKEN` is unset, since it is not required.
+     */
+    user?: SlackTokenCheck;
+  };
 };
 
 type Probe = { code?: string | null; message?: string | null } | null;
@@ -45,22 +55,31 @@ export async function readSchemaHealth(): Promise<SchemaHealth> {
   // visitor is granted, so a missing grant cannot read as a missing table.
   const supabase = createServiceSupabase();
 
-  const [recipients, statsView, slackIdentity, rpc, slack] = await Promise.all([
-    supabase.from("thank_recipients").select("thanks_id").limit(1),
-    supabase.from("people_with_stats").select("id").limit(1),
-    supabase.from("thanks").select("slack_channel_id, slack_message_ts").limit(1),
-    // An empty recipient list is refused by the function before it writes
-    // anything, so this asks whether the function resolves without recording a
-    // thanks. Only "not found" counts as missing; every other answer — a
-    // validation error, a permission error — means PostgREST could see it.
-    supabase.rpc("create_thanks_card", {
-      p_from_person_id: "00000000-0000-0000-0000-000000000000",
-      p_to_person_ids: [],
-      p_reason: "schema health probe",
-      p_source: "web",
-    }),
-    checkSlackToken(process.env.SLACK_BOT_TOKEN ?? ""),
-  ]);
+  const userToken = process.env.SLACK_USER_TOKEN ?? "";
+
+  const [recipients, statsView, slackIdentity, rpc, slack, slackUser] =
+    await Promise.all([
+      supabase.from("thank_recipients").select("thanks_id").limit(1),
+      supabase.from("people_with_stats").select("id").limit(1),
+      supabase
+        .from("thanks")
+        .select("slack_channel_id, slack_message_ts")
+        .limit(1),
+      // An empty recipient list is refused by the function before it writes
+      // anything, so this asks whether the function resolves without recording a
+      // thanks. Only "not found" counts as missing; every other answer — a
+      // validation error, a permission error — means PostgREST could see it.
+      supabase.rpc("create_thanks_card", {
+        p_from_person_id: "00000000-0000-0000-0000-000000000000",
+        p_to_person_ids: [],
+        p_reason: "schema health probe",
+        p_source: "web",
+      }),
+      checkSlackToken(process.env.SLACK_BOT_TOKEN ?? ""),
+      userToken
+        ? checkSlackToken(userToken, SLACK_CARD_USER_SCOPES)
+        : Promise.resolve(null),
+    ]);
 
   const objects = {
     thank_recipients: !recipients.error,
@@ -81,13 +100,16 @@ export async function readSchemaHealth(): Promise<SchemaHealth> {
   }
 
   return {
-    ok: pendingMigrations.length === 0 && slack.missingScopes.length === 0,
+    ok:
+      pendingMigrations.length === 0 &&
+      slack.missingScopes.length === 0 &&
+      (slackUser?.missingScopes.length ?? 0) === 0,
     shape:
       objects.thank_recipients && objects.create_thanks_card
         ? "grouped"
         : "legacy",
     objects,
     pendingMigrations,
-    slack,
+    slack: slackUser ? { ...slack, user: slackUser } : slack,
   };
 }

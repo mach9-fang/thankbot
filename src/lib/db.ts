@@ -817,6 +817,12 @@ export async function attachSlackMessage(
   }
 }
 
+/**
+ * Names and avatars for the Slack authors of thread replies.
+ *
+ * Only ever decoration: a reply from somebody with no `people` row is shown
+ * anyway, so a lookup that cannot run must not cost the card its replies.
+ */
 export async function peopleBySlackIds(
   slackUserIds: string[]
 ): Promise<Map<string, PersonSummary>> {
@@ -824,13 +830,22 @@ export async function peopleBySlackIds(
   const people = new Map<string, PersonSummary>();
   if (ids.length === 0) return people;
 
-  const supabase = createServiceSupabase();
-  const { data, error } = await supabase
-    .from("people")
-    .select("id, name, avatar_url, slack_user_id")
-    .in("slack_user_id", ids);
-
-  if (error) return people;
+  let data: Array<Record<string, unknown>> | null = null;
+  try {
+    const supabase = createServiceSupabase();
+    const result = await supabase
+      .from("people")
+      .select("id, name, avatar_url, slack_user_id")
+      .in("slack_user_id", ids);
+    if (result.error) return people;
+    data = result.data;
+  } catch (error) {
+    console.warn(
+      "Could not name the Slack repliers:",
+      error instanceof Error ? error.message : error
+    );
+    return people;
+  }
 
   for (const row of data ?? []) {
     const slackId = (row as { slack_user_id: string | null }).slack_user_id;

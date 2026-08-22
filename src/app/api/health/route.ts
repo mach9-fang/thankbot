@@ -25,7 +25,13 @@ export async function GET() {
 
     if (health.slack.missingScopes.length > 0) {
       console.error(
-        `Slack app is behind this deploy. Add and reinstall: ${health.slack.missingScopes.join(", ")}`
+        `Slack app is behind this deploy. Add bot scopes and reinstall: ${health.slack.missingScopes.join(", ")}`
+      );
+    }
+
+    if ((health.slack.user?.missingScopes.length ?? 0) > 0) {
+      console.error(
+        `SLACK_USER_TOKEN cannot read conversations ThankBot is not in. Add user scopes and reinstall: ${health.slack.user?.missingScopes.join(", ")}`
       );
     }
 

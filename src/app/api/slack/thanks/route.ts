@@ -295,7 +295,7 @@ async function recordThanks(
         const found = await findSlackAnnouncement(
           slash.channel_id,
           result.thanks.id,
-          botToken
+          { bot: botToken, user: process.env.SLACK_USER_TOKEN || undefined }
         );
         messageTs = found.status === "found" ? found.messageTs : null;
       }

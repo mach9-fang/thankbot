@@ -99,14 +99,26 @@ Workspace org (external users then can't complete sign-in).
    missing.
 
    Slack only shows an app the emoji and replies in conversations it belongs
-   to; there is no scope that reads a room from outside. With `channels:join`
-   ThankBot joins a public channel the first time `/thanks` is used there. A
-   **private channel or a DM cannot be joined by an app**, so those need
-   `/invite @ThankBot` once.
-3. To omit the mention in a **1:1 DM with a teammate**, also add the *user*
-   scope `im:read` under **User Token Scopes**. Slack never lets a bot token see
-   a DM it isn't in, so ThankBot reads that roster with the token of the person
-   who granted it, and only for that person's own commands.
+   to; there is no bot scope that reads a room from outside. With
+   `channels:join` ThankBot joins a public channel the first time `/thanks` is
+   used there. A **private channel or a DM cannot be joined by an app at all**
+   — see the user token below, which is how those work without anyone running
+   `/invite`.
+3. Under **User Token Scopes**, add `reactions:read`, `channels:history`,
+   `groups:history`, `im:history`, `mpim:history`, and `im:read`.
+
+   A bot token is refused every conversation the app is not in, and an app
+   cannot join a private channel or a DM. A *user* token is not bound that way:
+   it reads whatever its owner can see. So the card page tries the bot token
+   first and falls back to `SLACK_USER_TOKEN`, which is what makes emoji and
+   replies work in private channels and DMs with no invites anywhere. `im:read`
+   is the older half of this, letting `/thanks <reason>` skip the mention in a
+   1:1 DM.
+
+   The trade-off: replies read with that token are shown to anyone signed in to
+   the board, including people who are not in the conversation. Leave
+   `SLACK_USER_TOKEN` unset if that is not acceptable, and invite ThankBot to
+   the channels that should collect emoji instead.
 4. Install the app to your workspace and copy the **Bot User OAuth Token** (and
    the **User OAuth Token** if you added the user scope).
 5. Under **Basic Information**, copy the **Signing Secret**.
@@ -146,8 +158,9 @@ can be missing:
   scopes arrived with this feature, and Slack ignores a scope until the app is
   **reinstalled**.
 - **Membership.** Slack only shows an app a conversation it belongs to.
-  `channels:join` covers public channels; a private channel or a DM needs
-  `/invite @ThankBot`.
+  `channels:join` covers public channels; a private channel or a DM is covered
+  by `SLACK_USER_TOKEN`, or by `/invite @ThankBot` if you would rather not set
+  one.
 - **The migration.** `thanks.slack_channel_id` arrived with this feature too,
   and migrations are applied by hand.
 
@@ -160,8 +173,13 @@ whole deployment, before anyone opens a card:
 ```json
 { "ok": false, "pendingMigrations": [],
   "slack": { "ok": false, "configured": true,
-             "missingScopes": ["reactions:read", "channels:history"] } }
+             "missingScopes": ["reactions:read", "channels:history"],
+             "user": { "ok": true, "configured": true, "missingScopes": [] } } }
 ```
+
+`slack.user` is present only when `SLACK_USER_TOKEN` is set, since it is
+optional — but a token that cannot read what it is there for fails the check
+just like a missing bot scope.
 
 ### 4. Environment variables
 
@@ -177,7 +195,7 @@ cp .env.example .env.local
 | `SUPABASE_SERVICE_ROLE_KEY` | For `pnpm seed` and Slack writes; keep it out of the browser |
 | `SLACK_SIGNING_SECRET` | Slack app → Basic Information → Signing Secret |
 | `SLACK_BOT_TOKEN` | Slack app → OAuth & Permissions → Bot User OAuth Token |
-| `SLACK_USER_TOKEN` | Optional — User OAuth Token (`im:read` user scope) so its owner can skip the mention in their own 1:1 DMs |
+| `SLACK_USER_TOKEN` | Optional — User OAuth Token. Reads emoji and replies in private channels and DMs an app may not join, and lets its owner skip the mention in their own 1:1 DMs |
 | `SLACK_SKIP_VERIFY` | Local only — skips request signature checks |
 | `NEXT_PUBLIC_ALLOW_SELF_THANKS` | Debug only — set `true` to thank yourself while testing alone |
 

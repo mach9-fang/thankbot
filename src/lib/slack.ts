@@ -750,6 +750,23 @@ export type SlackApiProblem = {
   error: string;
   /** The scope Slack says the token needs, when it names one. */
   needed?: string;
+  /** Which token Slack refused, so a scope hint points at the right list. */
+  token: SlackTokenKind;
+};
+
+export type SlackTokenKind = "bot" | "user";
+
+/**
+ * The tokens the card page may read a conversation with.
+ *
+ * Slack refuses a bot token every conversation the app is not in, whatever
+ * scopes it carries, and an app cannot join a private channel or a DM at all.
+ * A user token is not bound that way: it reads whatever its owner can see. The
+ * `/thanks` recipient lookup already leans on this for DM rosters.
+ */
+export type SlackReadTokens = {
+  bot: string;
+  user?: string;
 };
 
 export type SlackCardActivityRaw = {
@@ -766,15 +783,15 @@ export type SlackCardActivityRaw = {
 export async function fetchSlackCardActivity(
   channelId: string,
   messageTs: string,
-  botToken: string
+  tokens: SlackReadTokens
 ): Promise<SlackCardActivityRaw> {
-  if (!channelId || !messageTs || !botToken) {
+  if (!channelId || !messageTs || !tokens.bot) {
     return { reactions: [], replies: [], problems: [] };
   }
 
   const [reactions, replies] = await Promise.all([
-    fetchSlackReactions(channelId, messageTs, botToken),
-    fetchSlackThreadReplies(channelId, messageTs, botToken),
+    fetchSlackReactions(channelId, messageTs, tokens),
+    fetchSlackThreadReplies(channelId, messageTs, tokens),
   ]);
 
   return {
@@ -803,9 +820,23 @@ export const SLACK_CARD_SCOPES = [
   "mpim:history",
 ] as const;
 
+/**
+ * User scopes that let the card page read a conversation ThankBot is not in.
+ *
+ * The only alternative is inviting the app to every private channel and group
+ * DM anyone says thanks in, which Slack requires a human to do by hand.
+ */
+export const SLACK_CARD_USER_SCOPES = [
+  "reactions:read",
+  "channels:history",
+  "groups:history",
+  "im:history",
+  "mpim:history",
+] as const;
+
 export type SlackTokenCheck = {
   ok: boolean;
-  /** Is `SLACK_BOT_TOKEN` set at all? */
+  /** Is the token set at all? */
   configured: boolean;
   /** Scopes on the installed token. Empty when Slack did not report them. */
   scopes: string[];
@@ -815,23 +846,22 @@ export type SlackTokenCheck = {
 };
 
 /**
- * What the installed bot token can actually do.
+ * What an installed token can actually do.
  *
  * Adding scopes in the Slack app config changes nothing until the app is
  * reinstalled, and nothing in a deploy notices. Slack lists the granted
  * scopes in an `auth.test` response header, so one call answers it.
  */
 export async function checkSlackToken(
-  botToken: string
+  token: string,
+  required: readonly string[] = SLACK_CARD_SCOPES
 ): Promise<SlackTokenCheck> {
-  const required = [...SLACK_CARD_SCOPES];
-
-  if (!botToken) {
+  if (!token) {
     return {
       ok: false,
       configured: false,
       scopes: [],
-      missingScopes: required,
+      missingScopes: [...required],
       error: "no_token",
     };
   }
@@ -840,7 +870,7 @@ export async function checkSlackToken(
   try {
     res = await fetch("https://slack.com/api/auth.test", {
       method: "POST",
-      headers: { Authorization: `Bearer ${botToken}` },
+      headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
   } catch {
@@ -904,15 +934,15 @@ export type SlackAnnouncementLookup =
 export async function findSlackAnnouncement(
   channelId: string,
   thanksId: string,
-  botToken: string
+  tokens: SlackReadTokens
 ): Promise<SlackAnnouncementLookup> {
-  if (!channelId || !thanksId || !botToken) {
+  if (!channelId || !thanksId || !tokens.bot) {
     return { status: "missing" };
   }
 
-  const { data, problem } = await slackApi<{
+  const { data, problem } = await slackRead<{
     messages?: Array<{ ts?: string; text?: string }>;
-  }>("conversations.history", botToken, {
+  }>("conversations.history", tokens, {
     channel: channelId,
     limit: "30",
   });
@@ -942,15 +972,16 @@ type SlackApiResult<T> = {
  */
 async function slackApi<T>(
   method: string,
-  botToken: string,
-  params: Record<string, string>
+  token: string,
+  params: Record<string, string>,
+  kind: SlackTokenKind = "bot"
 ): Promise<SlackApiResult<T>> {
   let body: (T & { ok?: boolean; error?: string; needed?: string }) | null;
   try {
     const res = await fetch(`https://slack.com/api/${method}`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${botToken}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams(params),
@@ -962,7 +993,10 @@ async function slackApi<T>(
       needed?: string;
     };
   } catch {
-    return { data: null, problem: reportSlackProblem(method, "request_failed") };
+    return {
+      data: null,
+      problem: reportSlackProblem(method, kind, "request_failed"),
+    };
   }
 
   if (!body?.ok) {
@@ -970,6 +1004,7 @@ async function slackApi<T>(
       data: null,
       problem: reportSlackProblem(
         method,
+        kind,
         body?.error ?? "unknown_error",
         body?.needed
       ),
@@ -979,30 +1014,55 @@ async function slackApi<T>(
   return { data: body, problem: null };
 }
 
+/**
+ * Read a conversation with whichever token Slack will accept.
+ *
+ * The bot token goes first so the common case stays one call and ThankBot's
+ * own membership is what grants access. When Slack refuses it — a private
+ * channel, a group DM, a public channel nobody added ThankBot to — the
+ * installer's user token is already in the room.
+ */
+async function slackRead<T>(
+  method: string,
+  tokens: SlackReadTokens,
+  params: Record<string, string>
+): Promise<SlackApiResult<T>> {
+  const asBot = await slackApi<T>(method, tokens.bot, params, "bot");
+  if (asBot.data || !tokens.user) {
+    return asBot;
+  }
+  return slackApi<T>(method, tokens.user, params, "user");
+}
+
 function reportSlackProblem(
   method: string,
+  token: SlackTokenKind,
   error: string,
   needed?: string
 ): SlackApiProblem {
   console.warn(
-    `Slack ${method} failed: ${error}${needed ? ` (token needs ${needed})` : ""}`
+    `Slack ${method} failed for the ${token} token: ${error}${
+      needed ? ` (needs ${needed})` : ""
+    }`
   );
-  return needed ? { method, error, needed } : { method, error };
+  return needed
+    ? { method, error, needed, token }
+    : { method, error, token };
 }
 
 async function fetchSlackReactions(
   channelId: string,
   messageTs: string,
-  botToken: string
+  tokens: SlackReadTokens
 ): Promise<{
   reactions: SlackMessageReaction[];
   problem: SlackApiProblem | null;
 }> {
-  const { data, problem } = await slackApi<{
+  const { data, problem } = await slackRead<{
     message?: {
       reactions?: Array<{ name?: string; count?: number; users?: string[] }>;
     };
-  }>("reactions.get", botToken, {
+  }>("reactions.get", tokens, {
     channel: channelId,
     timestamp: messageTs,
     full: "true",
@@ -1031,9 +1091,9 @@ async function fetchSlackReactions(
 async function fetchSlackThreadReplies(
   channelId: string,
   messageTs: string,
-  botToken: string
+  tokens: SlackReadTokens
 ): Promise<{ replies: SlackThreadReply[]; problem: SlackApiProblem | null }> {
-  const { data, problem } = await slackApi<{
+  const { data, problem } = await slackRead<{
     messages?: Array<{
       ts?: string;
       user?: string;
@@ -1041,7 +1101,7 @@ async function fetchSlackThreadReplies(
       bot_id?: string;
       subtype?: string;
     }>;
-  }>("conversations.replies", botToken, {
+  }>("conversations.replies", tokens, {
     channel: channelId,
     ts: messageTs,
     limit: "50",
