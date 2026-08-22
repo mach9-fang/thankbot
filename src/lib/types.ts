@@ -20,6 +20,24 @@ export type Thanks = {
 
 export type PersonSummary = Pick<Person, "id" | "name" | "avatar_url">;
 
+export type SlackCardReaction = {
+  name: string;
+  emoji: string;
+  count: number;
+};
+
+export type SlackCardComment = {
+  ts: string;
+  person: PersonSummary;
+  text: string;
+  created_at: string;
+};
+
+export type SlackCardActivity = {
+  reactions: SlackCardReaction[];
+  comments: SlackCardComment[];
+};
+
 export type ThanksWithPeople = Thanks & {
   from_person: PersonSummary;
   to_people: PersonSummary[];

@@ -30,6 +30,15 @@ type WriteClient = BoardClient & {
 
 type QueryError = { code?: string | null; message?: string | null };
 
+function isMissingSlackIdentityColumn(error: QueryError | null): boolean {
+  if (!error) return false;
+  return (
+    error.code === "42703" ||
+    error.code === "PGRST204" ||
+    /slack_channel_id|slack_message_ts/i.test(error.message ?? "")
+  );
+}
+
 /** PostgREST hides a function it cannot see behind PGRST202 rather than a 500. */
 function isMissingFunction(error: QueryError | null): boolean {
   if (!error) return false;
@@ -717,4 +726,80 @@ export async function createSlackThanks(input: {
     return { ok: false, status: 500, error: "Could not load the new thanks." };
   }
   return { ok: true, thanks };
+}
+
+export type ThanksSlackRef = {
+  channelId: string;
+  messageTs: string;
+};
+
+/** Slack message that announced this card, if ThankBot posted it as the bot. */
+export async function getThanksSlackRef(
+  id: string
+): Promise<ThanksSlackRef | null> {
+  const supabase = createServerSupabase();
+  const { data, error } = await supabase
+    .from("thanks")
+    .select("slack_channel_id, slack_message_ts")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingSlackIdentityColumn(error)) return null;
+    throw new Error(error.message);
+  }
+  if (!data?.slack_channel_id || !data?.slack_message_ts) {
+    return null;
+  }
+  return {
+    channelId: data.slack_channel_id as string,
+    messageTs: data.slack_message_ts as string,
+  };
+}
+
+/** Persist the Slack announcement so the card page can load its activity. */
+export async function attachSlackMessage(
+  thanksId: string,
+  channelId: string,
+  messageTs: string
+): Promise<void> {
+  const supabase = createServiceSupabase();
+  const { error } = await supabase
+    .from("thanks")
+    .update({
+      slack_channel_id: channelId,
+      slack_message_ts: messageTs,
+    })
+    .eq("id", thanksId);
+
+  if (error && !isMissingSlackIdentityColumn(error)) {
+    console.warn("Could not store Slack message identity:", error.message);
+  }
+}
+
+export async function peopleBySlackIds(
+  slackUserIds: string[]
+): Promise<Map<string, PersonSummary>> {
+  const ids = Array.from(new Set(slackUserIds.filter(Boolean)));
+  const people = new Map<string, PersonSummary>();
+  if (ids.length === 0) return people;
+
+  const supabase = createServiceSupabase();
+  const { data, error } = await supabase
+    .from("people")
+    .select("id, name, avatar_url, slack_user_id")
+    .in("slack_user_id", ids);
+
+  if (error) return people;
+
+  for (const row of data ?? []) {
+    const slackId = (row as { slack_user_id: string | null }).slack_user_id;
+    if (!slackId) continue;
+    people.set(slackId, {
+      id: row.id as string,
+      name: row.name as string,
+      avatar_url: (row as { avatar_url: string | null }).avatar_url,
+    });
+  }
+  return people;
 }

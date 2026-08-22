@@ -3,11 +3,13 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
 import { ConfettiOnOpen } from "@/components/ConfettiOnOpen";
+import { SlackCardActivity } from "@/components/SlackCardActivity";
 import { formatThanksWhen } from "@/components/ThanksCard";
 import { requireAuthUser } from "@/lib/auth";
-import { getThanks } from "@/lib/db";
+import { getThanks, getThanksSlackRef } from "@/lib/db";
 import { emojifyText } from "@/lib/emoji";
 import { formatNameList } from "@/lib/format";
+import { loadThanksSlackActivity } from "@/lib/slack-card";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +44,9 @@ export default async function ThanksPage({
   }
 
   const reason = emojifyText(thanks.reason);
+  const slackActivity = await loadThanksSlackActivity(
+    await getThanksSlackRef(thanks.id)
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -119,6 +124,8 @@ export default async function ThanksPage({
             </span>
           </div>
         </div>
+
+        {slackActivity ? <SlackCardActivity activity={slackActivity} /> : null}
       </article>
     </div>
   );

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import {
   ALLOW_SELF_THANKS,
+  attachSlackMessage,
   createSlackThanks,
   upsertPersonBySlackId,
 } from "@/lib/db";
@@ -14,6 +15,7 @@ import {
   listChannelHumanMembers,
   listChannelMemberIds,
   parseThanksText,
+  postSlackMessage,
   postSlackResponse,
   resolveHandlesToUserIds,
   resolveSoleChannelPeer,
@@ -247,7 +249,16 @@ async function recordThanks(
     const url = `${siteUrl()}/thanks/${result.thanks.id}`;
     const body = `:pray: ${sender.name} thanked ${receivedNames}: ${reason} — <${url}|View card>`;
 
-    await postSlackResponse(slash.response_url, body);
+    const posted = await postSlackMessage(slash.channel_id, body, botToken);
+    if (posted) {
+      await attachSlackMessage(
+        result.thanks.id,
+        posted.channelId,
+        posted.messageTs
+      );
+    } else {
+      await postSlackResponse(slash.response_url, body);
+    }
 
     if (skipNote) {
       await postSlackResponse(slash.response_url, skipNote, false);

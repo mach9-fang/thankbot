@@ -8,7 +8,11 @@
 import assert from "assert";
 import crypto from "crypto";
 import { loadEnvFile } from "./load-env";
-import { installSlackStub, RESPONSE_URL } from "./slack-stub";
+import {
+  installSlackStub,
+  RESPONSE_URL,
+  waitForSlackAnnouncement,
+} from "./slack-stub";
 
 loadEnvFile(".env.local");
 
@@ -99,11 +103,7 @@ async function main() {
   }
 
   async function waitForReply() {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (stub.replies.length > 0) return stub.replies[0].text;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error("ThankBot never replied through response_url");
+    return waitForSlackAnnouncement(stub);
   }
 
   function slashBody(channelId: string, text: string) {
@@ -145,7 +145,7 @@ async function main() {
     text: string,
     options?: { verifySignature?: boolean }
   ) {
-    stub.replies.length = 0;
+    stub.reset();
 
     const body = slashBody(channelId, text);
     let headers: Record<string, string> | undefined;
@@ -188,6 +188,20 @@ async function main() {
   assert.strictEqual(cards.length, 1, "the DM should record exactly one card");
   assert.strictEqual(cards[0].reason, "covering standup");
   assert.strictEqual(cards[0].source, "slack");
+  const dmIdentity = await supabase
+    .from("thanks")
+    .select("slack_channel_id, slack_message_ts")
+    .eq("id", cards[0].id)
+    .maybeSingle();
+  if (!dmIdentity.error) {
+    assert.strictEqual(dmIdentity.data?.slack_channel_id, null);
+    assert.strictEqual(dmIdentity.data?.slack_message_ts, null);
+  }
+  assert.strictEqual(stub.messages.length, 0);
+  assert.ok(
+    stub.replies.some((reply) => reply.responseType === "in_channel"),
+    "fall back to response_url when the bot cannot post"
+  );
   assert.ok(
     links[0].includes(`/thanks/${cards[0].id}`),
     `link ${links[0]} should point at card ${cards[0].id}`
