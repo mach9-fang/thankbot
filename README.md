@@ -19,9 +19,11 @@ teammate, and everyone sees it on the feed.
    with `source=slack`. When ThankBot is in the conversation it announces the
    card with `chat.postMessage` and stores that message's channel and timestamp
    so the thank-you card page can load Slack emoji and thread replies (the feed
-   does not call Slack). If the bot cannot post, it falls back to the slash
-   command's `response_url` and then tries to find that announcement in
-   history. Cards posted before this is deployed have no Slack identity, so
+   does not call Slack). A public channel it was never invited to answers
+   `not_in_channel`, so it joins with `conversations.join` and posts again. If
+   it still cannot post — a private channel or a DM, which an app may not join
+   — it falls back to the slash command's `response_url` and then tries to find
+   that announcement in history. Cards posted before this is deployed have no Slack identity, so
    their emoji will not appear until you send a new `/thanks`. Slack keeps
    calling whichever deployment the slash command Request URL points at.
    List people however
@@ -81,6 +83,8 @@ Workspace org (external users then can't complete sign-in).
 2. Under **OAuth & Permissions**, add bot scopes:
    - `commands`
    - `chat:write` (announce the card as ThankBot so the card page can find it)
+   - `channels:join` (add ThankBot to a public channel on its own, so nobody
+     has to run `/invite` first)
    - `reactions:read` (emoji on that announcement, loaded when someone opens the card)
    - `channels:history`, `groups:history`, `im:history`, and `mpim:history`
      (thread replies on the card page)
@@ -89,11 +93,16 @@ Workspace org (external users then can't complete sign-in).
    - `channels:read`, `groups:read`, `im:read`, and `mpim:read` (conversation
      rosters, so a lone teammate can be thanked without a mention)
 
-   Invite ThankBot to each channel where `/thanks` should collect Slack emoji
-   and comments. **Reinstall the app after adding scopes** — Slack keeps
-   honouring the token it already issued, so `/thanks` carries on working while
-   emoji and replies stay invisible. `GET /api/health` lists the scopes an
-   install is still missing.
+   **Reinstall the app after adding scopes** — Slack keeps honouring the token
+   it already issued, so `/thanks` carries on working while emoji and replies
+   stay invisible. `GET /api/health` lists the scopes an install is still
+   missing.
+
+   Slack only shows an app the emoji and replies in conversations it belongs
+   to; there is no scope that reads a room from outside. With `channels:join`
+   ThankBot joins a public channel the first time `/thanks` is used there. A
+   **private channel or a DM cannot be joined by an app**, so those need
+   `/invite @ThankBot` once.
 3. To omit the mention in a **1:1 DM with a teammate**, also add the *user*
    scope `im:read` under **User Token Scopes**. Slack never lets a bot token see
    a DM it isn't in, so ThankBot reads that roster with the token of the person
@@ -130,16 +139,23 @@ A recorded thanks posts in-channel: Slack `@mention`s each receiver, a
 
 #### When a card shows no Slack emoji or replies
 
-Reading emoji and replies takes more than a deploy: `reactions:read` and the
-four `*:history` scopes arrived with this feature, and Slack ignores a scope
-until the app is **reinstalled**. `thanks.slack_channel_id` arrived with it too,
-and migrations are applied by hand. Either one missing looks exactly like a
-thread nobody has reacted to.
+Reading emoji and replies takes more than a deploy, and three separate things
+can be missing:
 
-Rather than guess, the card page names the reason it found — a missing scope
-(with the scope Slack asked for), a channel ThankBot has been removed from, a
-card that was never announced, or an outstanding migration. `GET /api/health`
-answers the same question for the whole deployment, before anyone opens a card:
+- **Scopes.** `reactions:read`, `channels:join`, and the four `*:history`
+  scopes arrived with this feature, and Slack ignores a scope until the app is
+  **reinstalled**.
+- **Membership.** Slack only shows an app a conversation it belongs to.
+  `channels:join` covers public channels; a private channel or a DM needs
+  `/invite @ThankBot`.
+- **The migration.** `thanks.slack_channel_id` arrived with this feature too,
+  and migrations are applied by hand.
+
+Any of them looks exactly like a thread nobody has reacted to. Rather than
+guess, the card page names the reason it found — the scope Slack asked for, a
+conversation ThankBot is not in, an announcement that is no longer there, or an
+outstanding migration. `GET /api/health` answers the same question for the
+whole deployment, before anyone opens a card:
 
 ```json
 { "ok": false, "pendingMigrations": [],

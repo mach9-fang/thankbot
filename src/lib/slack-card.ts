@@ -18,7 +18,12 @@ export const SLACK_IDENTITY_MIGRATION = "0006_slack_message_identity.sql";
 export type SlackCardBlocker =
   | { kind: "schema_pending"; migration: string }
   | { kind: "no_token" }
-  | { kind: "not_announced" }
+  /** No Slack conversation recorded against the card at all. */
+  | { kind: "not_recorded" }
+  /** ThankBot is not in the conversation, so Slack will not show it. */
+  | { kind: "not_a_member" }
+  /** ThankBot can read the conversation but its announcement is not there. */
+  | { kind: "announcement_missing" }
   | { kind: "missing_scope"; scopes: string[] }
   | { kind: "unreadable"; error: string };
 
@@ -56,7 +61,7 @@ export async function loadThanksSlackActivity(
     });
   }
   if (ref.status === "not_announced") {
-    return blocked({ kind: "not_announced" });
+    return blocked({ kind: "not_recorded" });
   }
 
   const botToken = process.env.SLACK_BOT_TOKEN ?? "";
@@ -67,13 +72,15 @@ export async function loadThanksSlackActivity(
   const { channelId } = ref.ref;
   let messageTs = ref.ref.messageTs;
   if (!messageTs) {
-    messageTs = await findSlackAnnouncement(channelId, thanksId, botToken);
-    if (messageTs) {
-      await attachSlackMessage(thanksId, channelId, messageTs);
+    const found = await findSlackAnnouncement(channelId, thanksId, botToken);
+    if (found.status === "unreadable") {
+      return blocked(blockerForProblems([found.problem]) ?? { kind: "not_a_member" });
     }
-  }
-  if (!messageTs) {
-    return blocked({ kind: "not_announced" });
+    if (found.status === "missing") {
+      return blocked({ kind: "announcement_missing" });
+    }
+    messageTs = found.messageTs;
+    await attachSlackMessage(thanksId, channelId, messageTs);
   }
 
   const raw = await fetchSlackCardActivity(channelId, messageTs, botToken);
@@ -102,7 +109,7 @@ function blocked(blocker: SlackCardBlocker): SlackCardState {
   return { status: "blocked", blocker };
 }
 
-/** Missing scopes are the fixable case, so they win over anything else. */
+/** Missing scopes are the most fixable case, so they win over anything else. */
 function blockerForProblems(
   problems: SlackApiProblem[]
 ): SlackCardBlocker | null {
@@ -121,6 +128,16 @@ function blockerForProblems(
     return { kind: "missing_scope", scopes };
   }
 
+  if (
+    problems.some(
+      (problem) =>
+        problem.error === "not_in_channel" ||
+        problem.error === "channel_not_found"
+    )
+  ) {
+    return { kind: "not_a_member" };
+  }
+
   return { kind: "unreadable", error: problems[0].error };
 }
 
@@ -131,8 +148,12 @@ export function describeSlackCardBlocker(blocker: SlackCardBlocker): string {
       return `Slack emoji and thread replies need the ${blocker.migration} migration, which this database has not run yet.`;
     case "no_token":
       return "This deployment has no SLACK_BOT_TOKEN, so ThankBot cannot read its announcement.";
-    case "not_announced":
-      return "ThankBot never posted this card in Slack, so there is no message to read. Invite ThankBot to the channel and send a new /thanks.";
+    case "not_recorded":
+      return "ThankBot did not record a Slack conversation for this card, so there is no message to read.";
+    case "not_a_member":
+      return "ThankBot is not in this Slack conversation, and Slack only shows an app the emoji and replies in conversations it belongs to. With the channels:join scope ThankBot adds itself to public channels on its own; a private channel or a DM needs /invite @ThankBot.";
+    case "announcement_missing":
+      return "ThankBot could not find its announcement in this conversation's recent messages — it may have been deleted.";
     case "missing_scope": {
       const plural = blocker.scopes.length > 1;
       return `ThankBot's Slack app is missing the ${formatScopeList(
@@ -148,9 +169,6 @@ export function describeSlackCardBlocker(blocker: SlackCardBlocker): string {
 
 function describeSlackError(error: string): string {
   switch (error) {
-    case "not_in_channel":
-    case "channel_not_found":
-      return "ThankBot is no longer in the Slack conversation that announced this card, so it cannot read the emoji or replies.";
     case "message_not_found":
       return "ThankBot could not find its announcement in Slack — the message may have been deleted.";
     case "request_failed":

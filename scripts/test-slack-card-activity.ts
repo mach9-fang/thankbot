@@ -75,7 +75,7 @@ async function main() {
   });
   assert.deepStrictEqual(unannounced, {
     status: "blocked",
-    blocker: { kind: "not_announced" },
+    blocker: { kind: "not_recorded" },
   });
   assert.deepStrictEqual(
     stub.calls.filter((call) =>
@@ -204,7 +204,10 @@ async function main() {
     assert.strictEqual(denied, null, "denied channels must not post as the bot");
 
     const found = await findSlackAnnouncement(CHANNEL, recoverId, BOT);
-    assert.strictEqual(found, recoveredTs);
+    assert.deepStrictEqual(found, { status: "found", messageTs: recoveredTs });
+
+    const absent = await findSlackAnnouncement(CHANNEL, "no-such-card", BOT);
+    assert.deepStrictEqual(absent, { status: "missing" });
 
     const recovered = await loadThanksSlackActivity(recoverId, {
       status: "announced",
@@ -287,7 +290,9 @@ async function main() {
     halfStub.restore();
   }
 
-  // Being removed from the channel reads as an empty thread too.
+  // Being outside the channel reads as an empty thread too. Slack has no scope
+  // that lets an app read a conversation it does not belong to, so this is the
+  // one case where the answer is about membership rather than permissions.
   const goneStub = installSlackStub({
     users: { [SENDER]: { name: "Sam Sender" } },
     channels: { [CHANNEL]: { [BOT]: [SENDER] } },
@@ -303,13 +308,87 @@ async function main() {
     });
     if (state.status !== "blocked") throw new Error("expected a blocked card");
     const said = describeSlackCardBlocker(state.blocker);
-    assert.deepStrictEqual(state.blocker, {
-      kind: "unreadable",
-      error: "not_in_channel",
-    });
-    assert.match(said, /no longer in the Slack conversation/);
+    assert.deepStrictEqual(state.blocker, { kind: "not_a_member" });
+    assert.match(said, /not in this Slack conversation/);
+    assert.match(said, /channels:join/);
   } finally {
     goneStub.restore();
+  }
+
+  // The card that started this: announced through `response_url` because
+  // ThankBot was not in the room, so its channel is recorded but its ts is
+  // not, and reading history is refused for the same reason. Saying "ThankBot
+  // never posted this card" there was simply wrong.
+  const outsiderStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: {},
+    refuse: {
+      "conversations.history": { error: "not_in_channel" },
+    },
+  });
+  try {
+    const state = await loadThanksSlackActivity("card-id", {
+      status: "announced",
+      ref: { channelId: CHANNEL, messageTs: null },
+    });
+    if (state.status !== "blocked") throw new Error("expected a blocked card");
+    assert.deepStrictEqual(state.blocker, { kind: "not_a_member" });
+  } finally {
+    outsiderStub.restore();
+  }
+
+  // A readable channel that has lost the announcement is a different story.
+  const deletedStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: { [CHANNEL]: { [BOT]: [SENDER] } },
+  });
+  try {
+    const state = await loadThanksSlackActivity("card-id", {
+      status: "announced",
+      ref: { channelId: CHANNEL, messageTs: null },
+    });
+    if (state.status !== "blocked") throw new Error("expected a blocked card");
+    const said = describeSlackCardBlocker(state.blocker);
+    assert.deepStrictEqual(state.blocker, { kind: "announcement_missing" });
+    assert.match(said, /could not find its announcement/);
+  } finally {
+    deletedStub.restore();
+  }
+
+  // A public channel nobody invited ThankBot to should not need a human: it
+  // joins itself and posts, which is also what makes the card readable later.
+  const joinStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: {},
+    joinableChannels: [CHANNEL],
+  });
+  try {
+    const joined = await postSlackMessage(CHANNEL, "hello room", BOT);
+    assert.ok(joined, "ThankBot should join a public channel and post");
+    assert.strictEqual(joined.channelId, CHANNEL);
+    assert.deepStrictEqual(joinStub.calls, [
+      "chat.postMessage",
+      "conversations.join",
+      "chat.postMessage",
+    ]);
+  } finally {
+    joinStub.restore();
+  }
+
+  // A private channel or a DM cannot be joined, so the fallback still stands.
+  const privateStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: {},
+  });
+  try {
+    const refused = await postSlackMessage("G_PRIVATE", "hello room", BOT);
+    assert.strictEqual(refused, null, "a private channel needs a human invite");
+    assert.deepStrictEqual(privateStub.calls, [
+      "chat.postMessage",
+      "conversations.join",
+    ]);
+  } finally {
+    privateStub.restore();
   }
 
   // `/api/health` should be able to answer "is this install current?" without
@@ -325,6 +404,7 @@ async function main() {
     assert.strictEqual(check.configured, true);
     assert.strictEqual(check.ok, false);
     assert.deepStrictEqual(check.missingScopes, [
+      "channels:join",
       "reactions:read",
       "channels:history",
       "groups:history",
