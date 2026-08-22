@@ -40,6 +40,7 @@ type Particle = {
   size: number;
   color: Rgb;
   shape: Shape;
+  rotation: number;
   spin: number;
 };
 
@@ -332,6 +333,7 @@ function makeParticles(width: number, height: number, seed: number): Particle[] 
       size: 4 + rand() * 7,
       color: CONFETTI_COLORS[Math.floor(rand() * CONFETTI_COLORS.length)],
       shape: shapes[Math.floor(rand() * shapes.length)],
+      rotation: rand() * Math.PI * 2,
       spin: (rand() - 0.5) * 12,
     });
   }
@@ -353,7 +355,7 @@ function drawConfetti(
   for (const particle of particles) {
     const x = particle.x + particle.vx * t;
     const y = particle.y + particle.vy * t + 0.5 * gravity * t * t;
-    const rot = particle.spin * t;
+    const rot = particle.rotation + particle.spin * t;
     if (x < -12 || y < -12 || x > width + 12 || y > height + 12) continue;
     if (y > nameBandTop && y < nameBandBottom && Math.abs(x - width / 2) > 46) {
       continue;
@@ -364,7 +366,16 @@ function drawConfetti(
         fillCircle(pixels, width, height, x, y, particle.size * 0.55, particle.color);
         break;
       case "heart":
-        fillHeart(pixels, width, height, x, y, particle.size * 0.7, particle.color);
+        fillHeart(
+          pixels,
+          width,
+          height,
+          x,
+          y,
+          particle.size * 0.7,
+          rot,
+          particle.color
+        );
         break;
       case "star":
         fillStar(pixels, width, height, x, y, particle.size * 0.7, rot, particle.color);
@@ -464,17 +475,23 @@ function fillHeart(
   cx: number,
   cy: number,
   size: number,
+  rot: number,
   color: Rgb
 ) {
   const scale = Math.max(1.6, size);
-  const x0 = Math.floor(cx - scale * 1.2);
-  const x1 = Math.ceil(cx + scale * 1.2);
-  const y0 = Math.floor(cy - scale);
-  const y1 = Math.ceil(cy + scale * 1.2);
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  const reach = Math.ceil(scale * 1.2);
+  const x0 = Math.floor(cx - reach);
+  const x1 = Math.ceil(cx + reach);
+  const y0 = Math.floor(cy - reach);
+  const y1 = Math.ceil(cy + reach);
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
-      const nx = (x + 0.5 - cx) / scale;
-      const ny = -((y + 0.5 - cy) / scale);
+      const dx = (x + 0.5 - cx) / scale;
+      const dy = (y + 0.5 - cy) / scale;
+      const nx = dx * cos + dy * sin;
+      const ny = dx * sin - dy * cos;
       const a = nx * nx + ny * ny - 1;
       if (a * a * a - nx * nx * ny * ny * ny <= 0) {
         setPixel(pixels, width, height, x, y, color);
