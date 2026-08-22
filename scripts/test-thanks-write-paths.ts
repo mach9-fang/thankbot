@@ -278,11 +278,12 @@ async function main() {
 
   assert.strictEqual(stub.messages.length, 1, "announce the card as the bot");
   if (groupedSchema) {
-    let slackCard: {
+    type SlackCardRow = {
       id: string;
       slack_channel_id: string | null;
       slack_message_ts: string | null;
-    } | null = null;
+    };
+    let slackCard: SlackCardRow | null = null;
     let slackCardError: { message: string } | null = null;
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const result = await admin
@@ -291,7 +292,7 @@ async function main() {
         .eq("reason", "unblocking the deploy")
         .maybeSingle();
       slackCardError = result.error;
-      slackCard = result.data as typeof slackCard;
+      slackCard = (result.data ?? null) as SlackCardRow | null;
       if (slackCardError) break;
       if (slackCard?.slack_message_ts) break;
       await new Promise((resolve) => setTimeout(resolve, 50));
