@@ -11,7 +11,13 @@
 import assert from "assert";
 import { createClient } from "@supabase/supabase-js";
 import { loadEnvFile } from "./load-env";
-import { installSlackStub, RESPONSE_URL } from "./slack-stub";
+import {
+  announcementGifUrl,
+  installSlackStub,
+  RESPONSE_URL,
+  waitForSlackAnnouncement,
+} from "./slack-stub";
+import { loadThanksSlackActivity } from "../src/lib/slack-card";
 
 loadEnvFile(".env.local");
 
@@ -240,7 +246,7 @@ async function main() {
   }
 
   await removeSlashPeople();
-  stub.replies.length = 0;
+  stub.reset();
 
   const slashResponse = await POST(
     new Request("http://localhost:3000/api/slack/thanks", {
@@ -259,14 +265,7 @@ async function main() {
   );
   assert.strictEqual(slashResponse.status, 200);
 
-  let slashReply = "";
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (stub.replies.length > 0) {
-      slashReply = stub.replies[0].text;
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
+  const slashReply = await waitForSlackAnnouncement(stub);
 
   assert.ok(
     !/schema cache/i.test(slashReply),
@@ -277,16 +276,81 @@ async function main() {
     /^:pray: Sam Slack thanked <@U_WRITE_SLASH_RECIPIENT>: unblocking the deploy — <[^|>]+\|View card>$/,
     `unexpected Slack reply: ${slashReply}`
   );
-  const slashGif = (stub.replies[0]?.blocks ?? []).find(
-    (block): block is { type: string; image_url: string } =>
-      Boolean(
-        block &&
-          typeof block === "object" &&
-          (block as { type?: string }).type === "image"
-      )
+  assert.match(
+    announcementGifUrl(stub) ?? "",
+    /\/thanks\/[^/]+\/card\.gif$/,
+    "Slack should attach the thank-you card GIF"
   );
-  assert.ok(slashGif, "Slack should attach the thank-you card GIF");
-  assert.match(slashGif.image_url, /\/thanks\/[^/]+\/card\.gif$/);
+
+  assert.strictEqual(stub.messages.length, 1, "announce the card as the bot");
+  if (groupedSchema) {
+    type SlackCardRow = {
+      id: string;
+      slack_channel_id: string | null;
+      slack_message_ts: string | null;
+    };
+    let slackCard: SlackCardRow | null = null;
+    let slackCardError: { message: string } | null = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const result = await admin
+        .from("thanks")
+        .select("id, slack_channel_id, slack_message_ts")
+        .eq("reason", "unblocking the deploy")
+        .maybeSingle();
+      slackCardError = result.error;
+      slackCard = (result.data ?? null) as SlackCardRow | null;
+      if (slackCardError) break;
+      if (slackCard?.slack_message_ts) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (slackCardError) {
+      // 0006 is optional for the write itself; skip when the columns are absent.
+      if (!/slack_channel_id|slack_message_ts/i.test(slackCardError.message)) {
+        throw new Error(slackCardError.message);
+      }
+    } else {
+      assert.ok(slackCard, "the slash command should record a card");
+      assert.strictEqual(slackCard.slack_channel_id, SLASH_CHANNEL);
+      assert.strictEqual(slackCard.slack_message_ts, stub.messages[0].ts);
+
+      stub.setActivity(SLASH_CHANNEL, stub.messages[0].ts, {
+        reactions: [{ name: "heart", users: [SLASH_RECIPIENT] }],
+        replies: [
+          {
+            ts: `${stub.messages[0].ts.slice(0, -1)}2`,
+            user: SLASH_RECIPIENT,
+            text: "You're welcome :tada:",
+          },
+          {
+            ts: `${stub.messages[0].ts.slice(0, -1)}3`,
+            bot_id: "B1",
+            text: "bot chatter",
+          },
+        ],
+      });
+      const beforeCardView = stub.calls.filter(
+        (call) => call === "reactions.get" || call === "conversations.replies"
+      );
+      assert.deepStrictEqual(
+        beforeCardView,
+        [],
+        "recording a thanks must not read Slack reactions or replies"
+      );
+
+      const activity = await loadThanksSlackActivity(slackCard.id, {
+        channelId: SLASH_CHANNEL,
+        messageTs: stub.messages[0].ts,
+      });
+      assert.ok(activity, "the card view should load Slack extras");
+      assert.strictEqual(activity.reactions.length, 1);
+      assert.strictEqual(activity.reactions[0].name, "heart");
+      assert.strictEqual(activity.comments.length, 1);
+      assert.strictEqual(activity.comments[0].person.name, "Wren Writer");
+      assert.match(activity.comments[0].text, /You're welcome/);
+      assert.ok(stub.calls.includes("reactions.get"));
+      assert.ok(stub.calls.includes("conversations.replies"));
+    }
+  }
 
   await removeSlashPeople();
   await cleanUp();

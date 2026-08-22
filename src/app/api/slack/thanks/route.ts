@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import {
   ALLOW_SELF_THANKS,
+  attachSlackMessage,
   createSlackThanks,
   upsertPersonBySlackId,
 } from "@/lib/db";
@@ -16,7 +17,9 @@ import {
   formatSlackThanksText,
   listChannelHumanMembers,
   listChannelMemberIds,
+  findSlackAnnouncement,
   parseThanksText,
+  postSlackMessage,
   postSlackResponse,
   resolveHandlesToUserIds,
   resolveSoleChannelPeer,
@@ -276,12 +279,30 @@ async function recordThanks(
       console.error("Could not pre-render the thank-you card GIF", error);
     }
 
-    await postSlackResponse(
-      slash.response_url,
+    const blocks = slackThanksCardBlocks({ text: body, gifUrl, altText });
+    const posted = await postSlackMessage(
+      slash.channel_id,
       body,
-      true,
-      slackThanksCardBlocks({ text: body, gifUrl, altText })
+      botToken,
+      blocks
     );
+    let messageTs = posted?.messageTs ?? null;
+    const channelId = posted?.channelId ?? slash.channel_id;
+
+    if (!posted) {
+      await postSlackResponse(slash.response_url, body, true, blocks);
+      if (slash.channel_id) {
+        messageTs = await findSlackAnnouncement(
+          slash.channel_id,
+          result.thanks.id,
+          botToken
+        );
+      }
+    }
+
+    if (channelId) {
+      await attachSlackMessage(result.thanks.id, channelId, messageTs);
+    }
 
     if (skipNote) {
       await postSlackResponse(slash.response_url, skipNote, false);

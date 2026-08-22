@@ -55,19 +55,22 @@ async function main() {
   );
   assert.strictEqual(health.objects.thank_recipients, grouped);
   assert.strictEqual(health.objects.create_thanks_card, grouped);
+
+  const slackIdentity = !(
+    await admin.from("thanks").select("slack_channel_id").limit(1)
+  ).error;
+  assert.strictEqual(health.objects.slack_message_identity, slackIdentity);
+
+  const expectedPending: string[] = [];
+  if (!grouped) expectedPending.push("0004_group_thanks_recipients.sql");
+  if (!slackIdentity) expectedPending.push("0006_slack_message_identity.sql");
+
   assert.strictEqual(
     health.ok,
-    grouped,
-    "a database missing 0004 must not report healthy"
+    expectedPending.length === 0,
+    "a database missing a required migration must not report healthy"
   );
-
-  if (grouped) {
-    assert.deepStrictEqual(health.pendingMigrations, []);
-  } else {
-    assert.deepStrictEqual(health.pendingMigrations, [
-      "0004_group_thanks_recipients.sql",
-    ]);
-  }
+  assert.deepStrictEqual(health.pendingMigrations, expectedPending);
 
   // Probing must not write. This is the whole reason the probe passes an empty
   // recipient list rather than a real one.
@@ -79,12 +82,13 @@ async function main() {
 
   const response = await GET();
   const body = await response.json();
+  const healthy = expectedPending.length === 0;
   assert.strictEqual(
     response.status,
-    grouped ? 200 : 503,
-    `expected ${grouped ? 200 : 503}, got ${response.status}: ${JSON.stringify(body)}`
+    healthy ? 200 : 503,
+    `expected ${healthy ? 200 : 503}, got ${response.status}: ${JSON.stringify(body)}`
   );
-  assert.strictEqual(body.ok, grouped);
+  assert.strictEqual(body.ok, healthy);
 
   // Nothing about the board itself may leak from an unauthenticated route.
   const serialized = JSON.stringify(body);

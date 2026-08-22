@@ -16,13 +16,21 @@ teammate, and everyone sees it on the feed.
    the session — never from the request body.
 3. From Slack, `/thanks @alice @bob for …` hits `POST /api/slack/thanks`, which
    upserts people by `slack_user_id` and writes one card shared by all recipients
-   with `source=slack`. List people however you'd write them — `@alice, @bob`,
-   `@alice, @bob, and @carol`, `@alice; @bob`, `@alice & @bob` — the separators
-   belong to the list, not to the reason. You can thank a whole channel with
-   `/thanks everyone for …`, and omit the mention wherever ThankBot can see
-   exactly one other person — including a 1:1 DM with a teammate once
-   `SLACK_USER_TOKEN` is set (see below). Mentions that aren't in the
-   conversation (or don't exist) are skipped and reported back.
+   with `source=slack`. When ThankBot is in the conversation it announces the
+   card with `chat.postMessage` and stores that message's channel and timestamp
+   so the thank-you card page can load Slack emoji and thread replies (the feed
+   does not call Slack). If the bot cannot post, it falls back to the slash
+   command's `response_url` and then tries to find that announcement in
+   history. Cards posted before this is deployed have no Slack identity, so
+   their emoji will not appear until you send a new `/thanks`. Slack keeps
+   calling whichever deployment the slash command Request URL points at.
+   List people however
+   you'd write them — `@alice, @bob`, `@alice, @bob, and @carol`, `@alice; @bob`,
+   `@alice & @bob` — the separators belong to the list, not to the reason. You
+   can thank a whole channel with `/thanks everyone for …`, and omit the mention
+   wherever ThankBot can see exactly one other person — including a 1:1 DM with
+   a teammate once `SLACK_USER_TOKEN` is set (see below). Mentions that aren't
+   in the conversation (or don't exist) are skipped and reported back.
 4. On the web, the form's typeahead takes several teammates: pick them from the
    list, or type (or paste) names separated by commas, semicolons or "and". One
    send is one card, whoever it names. The feed, leaderboard, and `/people/[id]`
@@ -38,7 +46,7 @@ Run the files in `supabase/migrations/` in order in the Supabase SQL editor (or
 | Object | Purpose |
 |--------|---------|
 | `people` | One row per employee (`email`, `name`, `avatar_url`, optional `auth_user_id`, `slack_user_id`) |
-| `thanks` | One card with a sender, `reason`, and `source` |
+| `thanks` | One card with a sender, `reason`, `source`, and optional Slack message identity |
 | `thank_recipients` | The people recognized by each card |
 | `people_with_stats` | View adding `thanks_received` / `thanks_given` |
 
@@ -72,10 +80,17 @@ Workspace org (external users then can't complete sign-in).
 1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps).
 2. Under **OAuth & Permissions**, add bot scopes:
    - `commands`
+   - `chat:write` (announce the card as ThankBot so the card page can find it)
+   - `reactions:read` (emoji on that announcement, loaded when someone opens the card)
+   - `channels:history`, `groups:history`, `im:history`, and `mpim:history`
+     (thread replies on the card page)
    - `users:read`
    - `users:read.email` (links Slack people to Google logins by email)
    - `channels:read`, `groups:read`, `im:read`, and `mpim:read` (conversation
      rosters, so a lone teammate can be thanked without a mention)
+
+   Invite ThankBot to each channel where `/thanks` should collect Slack emoji
+   and comments. Reinstall the app after adding scopes.
 3. To omit the mention in a **1:1 DM with a teammate**, also add the *user*
    scope `im:read` under **User Token Scopes**. Slack never lets a bot token see
    a DM it isn't in, so ThankBot reads that roster with the token of the person
@@ -195,6 +210,7 @@ one carrying it.
 | `pnpm tsx scripts/test-parse.ts` | Slack `/thanks` text parser assertions |
 | `pnpm tsx scripts/test-slack-card-gif.ts` | Slack mention reply + 1-second card GIF |
 | `pnpm tsx scripts/test-slack-recipients.ts` | Recipient resolution for `/thanks` without a mention |
+| `pnpm tsx scripts/test-slack-card-activity.ts` | Slack announcement identity, emoji, and thread replies on the card |
 | `pnpm tsx scripts/test-recipient-list.ts` | Reading a typed or pasted list of names on the web form |
 | `pnpm tsx scripts/test-time-range.ts` | Which month or week the board's period picker means |
 | `pnpm tsx scripts/test-thanks-write-paths.ts` | Web + Slack writes against whichever schema is live (needs local Supabase + `.env.local`) |
