@@ -11,6 +11,9 @@ export const THANKS_CARD_GIF_FRAME_DELAY_MS = 100;
 export const THANKS_CARD_GIF_DURATION_MS =
   THANKS_CARD_GIF_FRAME_COUNT * THANKS_CARD_GIF_FRAME_DELAY_MS;
 
+/** Breathing room around the white card, so confetti has space to fly. */
+const CARD_MARGIN = 48;
+
 const CONFETTI_COLORS = [
   [0x64, 0x36, 0xf2],
   [0x7f, 0x4e, 0xf8],
@@ -107,7 +110,7 @@ function CardFrame({ fromName, toNames, reason }: ThanksCardGifInput) {
         display: "flex",
         flexDirection: "column",
         background: "#f3f1fc",
-        padding: 16,
+        padding: CARD_MARGIN,
       }}
     >
       <div
@@ -333,13 +336,17 @@ function drawConfetti(
   t: number
 ) {
   const gravity = 430;
+  // Keep From/To names readable — allow the burst through the heart only.
+  const nameBandTop = CARD_MARGIN + 36;
+  const nameBandBottom = CARD_MARGIN + 112;
   for (const particle of particles) {
     const x = particle.x + particle.vx * t;
     const y = particle.y + particle.vy * t + 0.5 * gravity * t * t;
     const rot = particle.spin * t;
     if (x < -12 || y < -12 || x > width + 12 || y > height + 12) continue;
-    // Keep From/To names readable — allow the burst through the heart only.
-    if (y > 52 && y < 128 && Math.abs(x - width / 2) > 46) continue;
+    if (y > nameBandTop && y < nameBandBottom && Math.abs(x - width / 2) > 46) {
+      continue;
+    }
 
     switch (particle.shape) {
       case "circle":
