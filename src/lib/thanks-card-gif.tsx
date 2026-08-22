@@ -10,6 +10,10 @@ export const THANKS_CARD_GIF_FRAME_COUNT = 10;
 export const THANKS_CARD_GIF_FRAME_DELAY_MS = 100;
 export const THANKS_CARD_GIF_DURATION_MS =
   THANKS_CARD_GIF_FRAME_COUNT * THANKS_CARD_GIF_FRAME_DELAY_MS;
+/** The burst is sampled from 0.3s to 1.3s, so the GIF opens mid-air. */
+export const THANKS_CARD_GIF_START_MS = 300;
+export const THANKS_CARD_GIF_END_MS =
+  THANKS_CARD_GIF_START_MS + THANKS_CARD_GIF_DURATION_MS;
 
 /** Breathing room around the white card, so confetti has space to fly. */
 const CARD_MARGIN = 48;
@@ -67,17 +71,17 @@ export async function renderThanksCardGif(
   const height = png.height;
   const base = toRgba(png.data, width, height, png.channels ?? 4);
   const particles = makeParticles(width, height, seedFrom(card));
+  const lastIndex = THANKS_CARD_GIF_FRAME_COUNT - 1;
 
   const last = base.slice();
-  drawConfetti(last, width, height, particles, 1);
+  drawConfetti(last, width, height, particles, frameSeconds(lastIndex));
   const palette = quantize(last, 256);
 
   const gif = GIFEncoder();
   for (let i = 0; i < THANKS_CARD_GIF_FRAME_COUNT; i++) {
-    const t = i / Math.max(1, THANKS_CARD_GIF_FRAME_COUNT - 1);
-    const frame = i === THANKS_CARD_GIF_FRAME_COUNT - 1 ? last : base.slice();
-    if (i !== THANKS_CARD_GIF_FRAME_COUNT - 1) {
-      drawConfetti(frame, width, height, particles, t);
+    const frame = i === lastIndex ? last : base.slice();
+    if (i !== lastIndex) {
+      drawConfetti(frame, width, height, particles, frameSeconds(i));
     }
     gif.writeFrame(applyPalette(frame, palette), width, height, {
       palette,
@@ -88,6 +92,13 @@ export async function renderThanksCardGif(
   }
   gif.finish();
   return gif.bytes();
+}
+
+/** Animation time (seconds) shown by frame `index` of the recorded window. */
+function frameSeconds(index: number): number {
+  return (
+    (THANKS_CARD_GIF_START_MS + index * THANKS_CARD_GIF_FRAME_DELAY_MS) / 1000
+  );
 }
 
 async function renderCardPng(card: ThanksCardGifInput): Promise<Uint8Array> {
@@ -306,7 +317,7 @@ function makeParticles(width: number, height: number, seed: number): Particle[] 
   const rand = mulberry32(seed);
   const shapes: Shape[] = ["rect", "circle", "star", "heart"];
   const particles: Particle[] = [];
-  // Burst from the heart between From/To so names stay readable at t=0.
+  // Burst from the heart between From/To so the names stay readable.
   const originX = width * 0.5;
   const originY = height * 0.36;
 

@@ -13,6 +13,8 @@ import {
 } from "../src/lib/slack";
 import {
   THANKS_CARD_GIF_DURATION_MS,
+  THANKS_CARD_GIF_END_MS,
+  THANKS_CARD_GIF_START_MS,
   renderThanksCardGif,
 } from "../src/lib/thanks-card-gif";
 
@@ -54,6 +56,13 @@ assert.ok(
   "the HTML card page stays behind sign-in"
 );
 assert.strictEqual(THANKS_CARD_GIF_DURATION_MS, 1000);
+// The recorded window is the second of animation from 0.3s to 1.3s.
+assert.strictEqual(THANKS_CARD_GIF_START_MS, 300);
+assert.strictEqual(THANKS_CARD_GIF_END_MS, 1300);
+assert.strictEqual(
+  THANKS_CARD_GIF_END_MS - THANKS_CARD_GIF_START_MS,
+  THANKS_CARD_GIF_DURATION_MS
+);
 
 async function main() {
   const gif = await renderThanksCardGif({
