@@ -1,13 +1,19 @@
+import { checkSlackToken, type SlackTokenCheck } from "./slack";
 import { createServiceSupabase } from "./supabase/admin";
 
 /**
- * Is the database carrying everything this build of the app expects?
+ * Is this deployment carrying everything this build of the app expects?
  *
  * Migrations are applied by hand against the hosted project, so code can ship
  * ahead of its schema. When that happened the only symptom was a PostgREST
  * error quoted back at whoever tried to say thanks ("Could not find the
  * function public.create_thanks_card ... in the schema cache"). This turns that
  * into something a deploy check or an uptime monitor can see on its own.
+ *
+ * Slack scopes fail the same way. Adding a scope to the app config does
+ * nothing until somebody reinstalls the app, and a release that needs a new
+ * scope has no way to notice it never arrived — the card page just looks like
+ * nobody has reacted yet.
  */
 
 export type SchemaHealth = {
@@ -21,6 +27,7 @@ export type SchemaHealth = {
     slack_message_identity: boolean;
   };
   pendingMigrations: string[];
+  slack: SlackTokenCheck;
 };
 
 type Probe = { code?: string | null; message?: string | null } | null;
@@ -38,7 +45,7 @@ export async function readSchemaHealth(): Promise<SchemaHealth> {
   // visitor is granted, so a missing grant cannot read as a missing table.
   const supabase = createServiceSupabase();
 
-  const [recipients, statsView, slackIdentity, rpc] = await Promise.all([
+  const [recipients, statsView, slackIdentity, rpc, slack] = await Promise.all([
     supabase.from("thank_recipients").select("thanks_id").limit(1),
     supabase.from("people_with_stats").select("id").limit(1),
     supabase.from("thanks").select("slack_channel_id, slack_message_ts").limit(1),
@@ -52,6 +59,7 @@ export async function readSchemaHealth(): Promise<SchemaHealth> {
       p_reason: "schema health probe",
       p_source: "web",
     }),
+    checkSlackToken(process.env.SLACK_BOT_TOKEN ?? ""),
   ]);
 
   const objects = {
@@ -73,12 +81,13 @@ export async function readSchemaHealth(): Promise<SchemaHealth> {
   }
 
   return {
-    ok: pendingMigrations.length === 0,
+    ok: pendingMigrations.length === 0 && slack.missingScopes.length === 0,
     shape:
       objects.thank_recipients && objects.create_thanks_card
         ? "grouped"
         : "legacy",
     objects,
     pendingMigrations,
+    slack,
   };
 }

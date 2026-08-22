@@ -1,6 +1,6 @@
 /**
- * The deploy check has to tell the truth about whichever schema is live, and
- * must never record a thanks while probing.
+ * The deploy check has to tell the truth about whichever schema and Slack
+ * install are live, and must never record a thanks while probing.
  *
  * Run against a migrated database and one still missing
  * `0004_group_thanks_recipients.sql`:
@@ -11,10 +11,32 @@
 import assert from "assert";
 import { createClient } from "@supabase/supabase-js";
 import { loadEnvFile } from "./load-env";
+import { installSlackStub } from "./slack-stub";
 
 loadEnvFile(".env.local");
 
+const BOT = "xoxb-health-test";
+const CURRENT_SCOPES = [
+  "commands",
+  "chat:write",
+  "reactions:read",
+  "channels:history",
+  "groups:history",
+  "im:history",
+  "mpim:history",
+  "users:read",
+];
+
 async function main() {
+  process.env.SLACK_BOT_TOKEN = BOT;
+  // Keep the probe off the network: a real Slack call would make this test
+  // depend on the workspace it happens to run next to.
+  let slack = installSlackStub({
+    users: {},
+    channels: {},
+    tokenOwners: { [BOT]: "B_THANKBOT" },
+    grantedScopes: CURRENT_SCOPES,
+  });
   const { readSchemaHealth } = await import("../src/lib/schema-health");
   const { GET } = await import("../src/app/api/health/route");
   const { isPublicPath } = await import("../src/lib/auth-paths");
@@ -104,6 +126,37 @@ async function main() {
     before,
     "the health route recorded a thanks while probing"
   );
+
+  assert.deepStrictEqual(health.slack.missingScopes, []);
+  assert.strictEqual(health.slack.configured, true);
+
+  // Slack scopes are granted by hand too, and a release that needs a new one
+  // is just as broken as a release missing a migration.
+  slack.restore();
+  slack = installSlackStub({
+    users: {},
+    channels: {},
+    tokenOwners: { [BOT]: "B_THANKBOT" },
+    grantedScopes: ["commands", "chat:write", "users:read"],
+  });
+  try {
+    const stale = await GET();
+    const staleBody = await stale.json();
+    assert.strictEqual(
+      stale.status,
+      503,
+      `a Slack app that was never reinstalled must fail the check: ${JSON.stringify(staleBody)}`
+    );
+    assert.deepStrictEqual(staleBody.slack.missingScopes, [
+      "reactions:read",
+      "channels:history",
+      "groups:history",
+      "im:history",
+      "mpim:history",
+    ]);
+  } finally {
+    slack.restore();
+  }
 
   console.log("schema health tests passed");
 }

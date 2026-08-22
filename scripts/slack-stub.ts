@@ -26,6 +26,14 @@ export type StubWorkspace = {
   denyPostMessage?: string[];
   /** Recent messages `conversations.history` returns, keyed by channel. */
   history?: Record<string, Array<{ ts: string; text: string }>>;
+  /**
+   * Methods Slack refuses, keyed by method name — `reactions.get` on an
+   * install that never got `reactions:read`, for instance. Slack answers 200
+   * with `ok: false`, so this is the only way those look different.
+   */
+  refuse?: Record<string, { error: string; needed?: string }>;
+  /** Scopes `auth.test` reports in its `x-oauth-scopes` response header. */
+  grantedScopes?: string[];
 };
 
 export type StubMessageActivity = {
@@ -66,10 +74,10 @@ export type SlackStub = {
 
 export const RESPONSE_URL = "https://hooks.slack.test/commands/thankbot";
 
-function jsonResponse(payload: unknown) {
+function jsonResponse(payload: unknown, headers?: Record<string, string>) {
   return new Response(JSON.stringify(payload), {
     status: 200,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
   });
 }
 
@@ -152,18 +160,33 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
       return realFetch(input, init);
     }
 
-    calls.push(url.replace("https://slack.com/api/", ""));
+    const method = url.replace("https://slack.com/api/", "");
+    calls.push(method);
 
     const params = new URLSearchParams(String(init?.body ?? ""));
     const headers = new Headers(init?.headers);
     const token = (headers.get("Authorization") ?? "").replace(/^Bearer /, "");
+
+    const refused = workspace.refuse?.[method];
+    if (refused) {
+      return jsonResponse({
+        ok: false,
+        error: refused.error,
+        ...(refused.needed ? { needed: refused.needed } : {}),
+      });
+    }
 
     if (url.endsWith("/auth.test")) {
       const owner = workspace.tokenOwners?.[token];
       if (!owner) {
         return jsonResponse({ ok: false, error: "invalid_auth" });
       }
-      return jsonResponse({ ok: true, user_id: owner });
+      return jsonResponse(
+        { ok: true, user_id: owner },
+        workspace.grantedScopes
+          ? { "x-oauth-scopes": workspace.grantedScopes.join(",") }
+          : undefined
+      );
     }
 
     if (url.endsWith("/users.info")) {

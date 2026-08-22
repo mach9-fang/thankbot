@@ -723,14 +723,30 @@ export type SlackThreadReply = {
   createdAt: string;
 };
 
+/**
+ * A Web API call Slack refused. Kept rather than swallowed: `missing_scope`
+ * after an install that predates a scope, and `not_in_channel` after ThankBot
+ * is removed from a room, both look exactly like "nobody reacted yet".
+ */
+export type SlackApiProblem = {
+  /** Web API method that failed, e.g. `reactions.get`. */
+  method: string;
+  /** Slack's own error code, e.g. `missing_scope`. */
+  error: string;
+  /** The scope Slack says the token needs, when it names one. */
+  needed?: string;
+};
+
 export type SlackCardActivityRaw = {
   reactions: SlackMessageReaction[];
   replies: SlackThreadReply[];
+  problems: SlackApiProblem[];
 };
 
 /**
  * Emoji and thread replies on one Slack message. Two Web API calls; callers
- * should only use this from the card page, not the feed.
+ * should only use this from the card page, not the feed. Emoji and replies
+ * need different scopes, so either half can fail on its own.
  */
 export async function fetchSlackCardActivity(
   channelId: string,
@@ -738,7 +754,7 @@ export async function fetchSlackCardActivity(
   botToken: string
 ): Promise<SlackCardActivityRaw> {
   if (!channelId || !messageTs || !botToken) {
-    return { reactions: [], replies: [] };
+    return { reactions: [], replies: [], problems: [] };
   }
 
   const [reactions, replies] = await Promise.all([
@@ -746,7 +762,108 @@ export async function fetchSlackCardActivity(
     fetchSlackThreadReplies(channelId, messageTs, botToken),
   ]);
 
-  return { reactions, replies };
+  return {
+    reactions: reactions.reactions,
+    replies: replies.replies,
+    problems: [reactions.problem, replies.problem].filter(
+      (problem): problem is SlackApiProblem => problem !== null
+    ),
+  };
+}
+
+/** Bot scopes the card page needs, beyond what `/thanks` itself uses. */
+export const SLACK_CARD_SCOPES = [
+  "chat:write",
+  "reactions:read",
+  "channels:history",
+  "groups:history",
+  "im:history",
+  "mpim:history",
+] as const;
+
+export type SlackTokenCheck = {
+  ok: boolean;
+  /** Is `SLACK_BOT_TOKEN` set at all? */
+  configured: boolean;
+  /** Scopes on the installed token. Empty when Slack did not report them. */
+  scopes: string[];
+  /** Card-page scopes the install is missing. */
+  missingScopes: string[];
+  error?: string;
+};
+
+/**
+ * What the installed bot token can actually do.
+ *
+ * Adding scopes in the Slack app config changes nothing until the app is
+ * reinstalled, and nothing in a deploy notices. Slack lists the granted
+ * scopes in an `auth.test` response header, so one call answers it.
+ */
+export async function checkSlackToken(
+  botToken: string
+): Promise<SlackTokenCheck> {
+  const required = [...SLACK_CARD_SCOPES];
+
+  if (!botToken) {
+    return {
+      ok: false,
+      configured: false,
+      scopes: [],
+      missingScopes: required,
+      error: "no_token",
+    };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch("https://slack.com/api/auth.test", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${botToken}` },
+      cache: "no-store",
+    });
+  } catch {
+    return {
+      ok: false,
+      configured: true,
+      scopes: [],
+      missingScopes: [],
+      error: "request_failed",
+    };
+  }
+
+  const body = (await res.json().catch(() => null)) as {
+    ok?: boolean;
+    error?: string;
+  } | null;
+
+  if (!body?.ok) {
+    return {
+      ok: false,
+      configured: true,
+      scopes: [],
+      missingScopes: [],
+      error: body?.error ?? "invalid_auth",
+    };
+  }
+
+  const scopes = (res.headers.get("x-oauth-scopes") ?? "")
+    .split(",")
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+
+  // No header means Slack did not say; treat that as "nothing to report"
+  // rather than inventing six missing scopes.
+  const missingScopes =
+    scopes.length === 0
+      ? []
+      : required.filter((scope) => !scopes.includes(scope));
+
+  return {
+    ok: missingScopes.length === 0,
+    configured: true,
+    scopes,
+    missingScopes,
+  };
 }
 
 /**
@@ -762,15 +879,14 @@ export async function findSlackAnnouncement(
     return null;
   }
 
-  const data = (await slackApi("conversations.history", botToken, {
+  const { data } = await slackApi<{
+    messages?: Array<{ ts?: string; text?: string }>;
+  }>("conversations.history", botToken, {
     channel: channelId,
     limit: "30",
-  })) as {
-    ok?: boolean;
-    messages?: Array<{ ts?: string; text?: string }>;
-  } | null;
+  });
 
-  if (!data?.ok || !data.messages) {
+  if (!data?.messages) {
     return null;
   }
 
@@ -783,11 +899,22 @@ export async function findSlackAnnouncement(
   return null;
 }
 
-async function slackApi(
+type SlackApiResult<T> = {
+  data: T | null;
+  problem: SlackApiProblem | null;
+};
+
+/**
+ * One Web API call, with `ok: false` reported rather than dropped. Slack
+ * answers 200 for refusals, so the error code in the body is the only sign
+ * that a scope is missing or ThankBot has been removed from a room.
+ */
+async function slackApi<T>(
   method: string,
   botToken: string,
   params: Record<string, string>
-): Promise<unknown | null> {
+): Promise<SlackApiResult<T>> {
+  let body: (T & { ok?: boolean; error?: string; needed?: string }) | null;
   try {
     const res = await fetch(`https://slack.com/api/${method}`, {
       method: "POST",
@@ -798,33 +925,63 @@ async function slackApi(
       body: new URLSearchParams(params),
       cache: "no-store",
     });
-    return await res.json();
+    body = (await res.json()) as T & {
+      ok?: boolean;
+      error?: string;
+      needed?: string;
+    };
   } catch {
-    return null;
+    return { data: null, problem: reportSlackProblem(method, "request_failed") };
   }
+
+  if (!body?.ok) {
+    return {
+      data: null,
+      problem: reportSlackProblem(
+        method,
+        body?.error ?? "unknown_error",
+        body?.needed
+      ),
+    };
+  }
+
+  return { data: body, problem: null };
+}
+
+function reportSlackProblem(
+  method: string,
+  error: string,
+  needed?: string
+): SlackApiProblem {
+  console.warn(
+    `Slack ${method} failed: ${error}${needed ? ` (token needs ${needed})` : ""}`
+  );
+  return needed ? { method, error, needed } : { method, error };
 }
 
 async function fetchSlackReactions(
   channelId: string,
   messageTs: string,
   botToken: string
-): Promise<SlackMessageReaction[]> {
-  const data = (await slackApi("reactions.get", botToken, {
-    channel: channelId,
-    timestamp: messageTs,
-    full: "true",
-  })) as {
-    ok?: boolean;
+): Promise<{
+  reactions: SlackMessageReaction[];
+  problem: SlackApiProblem | null;
+}> {
+  const { data, problem } = await slackApi<{
     message?: {
       reactions?: Array<{ name?: string; count?: number; users?: string[] }>;
     };
-  } | null;
+  }>("reactions.get", botToken, {
+    channel: channelId,
+    timestamp: messageTs,
+    full: "true",
+  });
 
-  if (!data?.ok) {
-    return [];
+  if (!data) {
+    return { reactions: [], problem };
   }
 
-  return (data.message?.reactions ?? [])
+  const reactions = (data.message?.reactions ?? [])
     .filter((row) => row.name)
     .map((row) => {
       const name = row.name as string;
@@ -836,19 +993,16 @@ async function fetchSlackReactions(
       };
     })
     .filter((row) => row.count > 0);
+
+  return { reactions, problem: null };
 }
 
 async function fetchSlackThreadReplies(
   channelId: string,
   messageTs: string,
   botToken: string
-): Promise<SlackThreadReply[]> {
-  const data = (await slackApi("conversations.replies", botToken, {
-    channel: channelId,
-    ts: messageTs,
-    limit: "50",
-  })) as {
-    ok?: boolean;
+): Promise<{ replies: SlackThreadReply[]; problem: SlackApiProblem | null }> {
+  const { data, problem } = await slackApi<{
     messages?: Array<{
       ts?: string;
       user?: string;
@@ -856,13 +1010,17 @@ async function fetchSlackThreadReplies(
       bot_id?: string;
       subtype?: string;
     }>;
-  } | null;
+  }>("conversations.replies", botToken, {
+    channel: channelId,
+    ts: messageTs,
+    limit: "50",
+  });
 
-  if (!data?.ok || !data.messages) {
-    return [];
+  if (!data?.messages) {
+    return { replies: [], problem };
   }
 
-  return data.messages.flatMap((message) => {
+  const replies = data.messages.flatMap((message) => {
     if (!message.ts || message.ts === messageTs) return [];
     if (message.bot_id || message.subtype) return [];
     if (!message.user) return [];
@@ -877,6 +1035,8 @@ async function fetchSlackThreadReplies(
       },
     ];
   });
+
+  return { replies, problem: null };
 }
 
 /** Slack timestamps are unix seconds with a unique suffix after the dot. */

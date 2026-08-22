@@ -90,7 +90,10 @@ Workspace org (external users then can't complete sign-in).
      rosters, so a lone teammate can be thanked without a mention)
 
    Invite ThankBot to each channel where `/thanks` should collect Slack emoji
-   and comments. Reinstall the app after adding scopes.
+   and comments. **Reinstall the app after adding scopes** — Slack keeps
+   honouring the token it already issued, so `/thanks` carries on working while
+   emoji and replies stay invisible. `GET /api/health` lists the scopes an
+   install is still missing.
 3. To omit the mention in a **1:1 DM with a teammate**, also add the *user*
    scope `im:read` under **User Token Scopes**. Slack never lets a bot token see
    a DM it isn't in, so ThankBot reads that roster with the token of the person
@@ -124,6 +127,25 @@ ThankBot itself has nobody to thank, so it asks for a mention.
 A recorded thanks posts in-channel: Slack `@mention`s each receiver, a
 **View card** link, and a 1-second GIF of the thank-you card with confetti
 (`/thanks/<id>/card.gif`, public so Slack can fetch it).
+
+#### When a card shows no Slack emoji or replies
+
+Reading emoji and replies takes more than a deploy: `reactions:read` and the
+four `*:history` scopes arrived with this feature, and Slack ignores a scope
+until the app is **reinstalled**. `thanks.slack_channel_id` arrived with it too,
+and migrations are applied by hand. Either one missing looks exactly like a
+thread nobody has reacted to.
+
+Rather than guess, the card page names the reason it found — a missing scope
+(with the scope Slack asked for), a channel ThankBot has been removed from, a
+card that was never announced, or an outstanding migration. `GET /api/health`
+answers the same question for the whole deployment, before anyone opens a card:
+
+```json
+{ "ok": false, "pendingMigrations": [],
+  "slack": { "ok": false, "configured": true,
+             "missingScopes": ["reactions:read", "channels:history"] } }
+```
 
 ### 4. Environment variables
 
@@ -169,16 +191,22 @@ Open [http://localhost:3000](http://localhost:3000).
    migration is outstanding — a thanks sent before
    `0004_group_thanks_recipients.sql` is applied is still recorded, but as one
    row per recipient instead of one shared card.
-5. Check `GET /api/health` after the deploy. It needs no session and answers
-   `503` with the filenames still to apply:
+5. Reinstall the Slack app if the release added a bot scope. Scopes added in
+   the app config do nothing until the install is redone, and the app keeps
+   working with its old ones, so nothing fails loudly.
+6. Check `GET /api/health` after the deploy. It needs no session and answers
+   `503` with the migrations still to apply and the bot scopes still to grant:
 
    ```json
    { "ok": false, "shape": "legacy",
-     "pendingMigrations": ["0004_group_thanks_recipients.sql"] }
+     "pendingMigrations": ["0004_group_thanks_recipients.sql"],
+     "slack": { "ok": false, "configured": true,
+                "missingScopes": ["reactions:read"] } }
    ```
 
-   Point an uptime monitor at it and a schema that has fallen behind the code
-   raises an alarm instead of waiting to be found by somebody saying thanks.
+   Point an uptime monitor at it and a schema or a Slack install that has
+   fallen behind the code raises an alarm instead of waiting to be found by
+   somebody saying thanks.
 
 Slack keeps talking to whichever deployment its slash command Request URL points
 at, so a change to `/thanks` only shows up in Slack once that deployment is the
