@@ -31,6 +31,8 @@ const CURRENT_SCOPES = [
 
 async function main() {
   process.env.SLACK_BOT_TOKEN = BOT;
+  // Owned by this test, not by whatever .env.local happens to carry.
+  delete process.env.SLACK_USER_TOKEN;
   // Keep the probe off the network: a real Slack call would make this test
   // depend on the workspace it happens to run next to.
   let slack = installSlackStub({
