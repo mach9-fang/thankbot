@@ -292,11 +292,12 @@ async function recordThanks(
     if (!posted) {
       await postSlackResponse(slash.response_url, body, true, blocks);
       if (slash.channel_id) {
-        messageTs = await findSlackAnnouncement(
+        const found = await findSlackAnnouncement(
           slash.channel_id,
           result.thanks.id,
           botToken
         );
+        messageTs = found.status === "found" ? found.messageTs : null;
       }
     }
 

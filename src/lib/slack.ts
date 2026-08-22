@@ -662,9 +662,34 @@ export type PostedSlackMessage = {
 };
 
 /**
+ * Add ThankBot to a conversation so it can read the emoji and replies on its
+ * own announcement. Slack allows this for public channels only; a private
+ * channel or a DM answers `channel_not_found`, and only a human can invite it.
+ */
+export async function joinSlackChannel(
+  channelId: string,
+  botToken: string
+): Promise<boolean> {
+  if (!channelId || !botToken) return false;
+
+  const { data } = await slackApi<{ already_in_channel?: boolean }>(
+    "conversations.join",
+    botToken,
+    { channel: channelId }
+  );
+  return data !== null;
+}
+
+/**
  * Post as the bot so Slack returns the message `ts`. Needed later to load
  * emoji and thread replies on the card. Returns null when ThankBot cannot
- * post (not in the conversation, missing `chat:write`, etc.).
+ * post (missing `chat:write`, a private channel it was never invited to, etc.).
+ *
+ * A public channel nobody thought to invite ThankBot to answers
+ * `not_in_channel`, so it joins and tries once more rather than falling back
+ * to `response_url` — Slack only lets an app read a conversation it belongs
+ * to, so a message posted from outside the room could never grow emoji this
+ * page can see.
  */
 export async function postSlackMessage(
   channelId: string | undefined,
@@ -676,38 +701,28 @@ export async function postSlackMessage(
     return null;
   }
 
-  try {
-    const params = new URLSearchParams({ channel: channelId, text });
-    if (blocks && blocks.length > 0) {
-      params.set("blocks", JSON.stringify(blocks));
-    }
+  const params: Record<string, string> = { channel: channelId, text };
+  if (blocks && blocks.length > 0) {
+    params.blocks = JSON.stringify(blocks);
+  }
 
-    const res = await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${botToken}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: params,
-      cache: "no-store",
-    });
+  type PostResult = { channel?: string; ts?: string };
+  const first = await slackApi<PostResult>("chat.postMessage", botToken, params);
 
-    const data = (await res.json()) as {
-      ok: boolean;
-      channel?: string;
-      ts?: string;
-      error?: string;
-    };
-
-    if (!data.ok || !data.channel || !data.ts) {
-      console.warn(`chat.postMessage failed: ${data.error ?? "unknown_error"}`);
+  let data = first.data;
+  if (first.problem?.error === "not_in_channel") {
+    if (!(await joinSlackChannel(channelId, botToken))) {
       return null;
     }
+    data = (await slackApi<PostResult>("chat.postMessage", botToken, params))
+      .data;
+  }
 
-    return { channelId: data.channel, messageTs: data.ts };
-  } catch {
+  if (!data?.channel || !data.ts) {
     return null;
   }
+
+  return { channelId: data.channel, messageTs: data.ts };
 }
 
 export type SlackMessageReaction = {
@@ -771,9 +786,16 @@ export async function fetchSlackCardActivity(
   };
 }
 
-/** Bot scopes the card page needs, beyond what `/thanks` itself uses. */
+/**
+ * Bot scopes the card page needs, beyond what `/thanks` itself uses.
+ *
+ * `channels:join` is here because Slack only lets an app read a conversation
+ * it belongs to, and it is the only way ThankBot can get there without a human
+ * running `/invite` in every channel.
+ */
 export const SLACK_CARD_SCOPES = [
   "chat:write",
+  "channels:join",
   "reactions:read",
   "channels:history",
   "groups:history",
@@ -867,6 +889,15 @@ export async function checkSlackToken(
 }
 
 /**
+ * "Not in the room" and "the message is gone" both left this returning null,
+ * and only the first is something a reader can fix.
+ */
+export type SlackAnnouncementLookup =
+  | { status: "found"; messageTs: string }
+  | { status: "missing" }
+  | { status: "unreadable"; problem: SlackApiProblem };
+
+/**
  * Find the announcement people actually react to after a `response_url`
  * fallback. Matches the card URL in recent history.
  */
@@ -874,12 +905,12 @@ export async function findSlackAnnouncement(
   channelId: string,
   thanksId: string,
   botToken: string
-): Promise<string | null> {
+): Promise<SlackAnnouncementLookup> {
   if (!channelId || !thanksId || !botToken) {
-    return null;
+    return { status: "missing" };
   }
 
-  const { data } = await slackApi<{
+  const { data, problem } = await slackApi<{
     messages?: Array<{ ts?: string; text?: string }>;
   }>("conversations.history", botToken, {
     channel: channelId,
@@ -887,16 +918,16 @@ export async function findSlackAnnouncement(
   });
 
   if (!data?.messages) {
-    return null;
+    return problem ? { status: "unreadable", problem } : { status: "missing" };
   }
 
   const needle = `/thanks/${thanksId}`;
   for (const message of data.messages) {
     if (message.ts && message.text?.includes(needle)) {
-      return message.ts;
+      return { status: "found", messageTs: message.ts };
     }
   }
-  return null;
+  return { status: "missing" };
 }
 
 type SlackApiResult<T> = {
