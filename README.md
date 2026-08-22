@@ -106,6 +106,10 @@ teammate (with `SLACK_USER_TOKEN`), and in any channel or group DM where
 ThankBot is a member and exactly one other person is present. A 1:1 DM with
 ThankBot itself has nobody to thank, so it asks for a mention.
 
+A recorded thanks posts in-channel: Slack `@mention`s each receiver, a
+**View card** link, and a 1-second GIF of the thank-you card with confetti
+(`/thanks/<id>/card.gif`, public so Slack can fetch it).
+
 ### 4. Environment variables
 
 ```bash
@@ -173,7 +177,8 @@ one carrying it.
 | `POST` | `/api/thanks` | Send thanks — requires a session; body `{ to_person_ids, reason }` (or legacy `to_person_id`) |
 | `POST` | `/api/slack/thanks` | Slack slash command — verified with signing secret |
 | `GET` | `/api/health` | Deploy check — no session needed; `503` while a migration is outstanding |
-| `GET` | `/thanks/[id]` | Public card for one thanks, with one or more recipients |
+| `GET` | `/thanks/[id]` | Card page for one thanks (signed-in) |
+| `GET` | `/thanks/[id]/card.gif` | 1-second thank-you card GIF with confetti (public; Slack embed) |
 | `GET` | `/api/people` | People with received/given counts |
 | `GET` | `/api/people/[id]` | Person + received/given history |
 
@@ -188,6 +193,7 @@ one carrying it.
 | `pnpm db:push` | Apply `supabase/migrations/` to the linked hosted project |
 | `pnpm lint` | ESLint |
 | `pnpm tsx scripts/test-parse.ts` | Slack `/thanks` text parser assertions |
+| `pnpm tsx scripts/test-slack-card-gif.ts` | Slack mention reply + 1-second card GIF |
 | `pnpm tsx scripts/test-slack-recipients.ts` | Recipient resolution for `/thanks` without a mention |
 | `pnpm tsx scripts/test-recipient-list.ts` | Reading a typed or pasted list of names on the web form |
 | `pnpm tsx scripts/test-time-range.ts` | Which month or week the board's period picker means |

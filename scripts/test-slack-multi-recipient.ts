@@ -161,10 +161,20 @@ async function main() {
     assert.match(
       reply,
       new RegExp(
-        `^:pray: Fang Lee thanked \\*[^*]+\\*, \\*[^*]+\\*, and \\*[^*]+\\*: ${REASON} — <[^|>]+\\|View card>$`
+        `^:pray: Fang Lee thanked <@${NIYA}>, <@${ANTHONY}>, and <@${CHRIS}>: ${REASON} — <[^|>]+\\|View card>$`
       ),
       `${label}: ${reply}`
     );
+    const gif = (stub.replies[0]?.blocks ?? []).find(
+      (block): block is { type: string; image_url: string } =>
+        Boolean(
+          block &&
+            typeof block === "object" &&
+            (block as { type?: string }).type === "image"
+        )
+    );
+    assert.ok(gif, `${label}: expected a card GIF in ${reply}`);
+    assert.match(gif.image_url, /\/thanks\/[^/]+\/card\.gif$/);
   }
 
   // A whole channel still shares one card.

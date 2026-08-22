@@ -60,6 +60,10 @@ async function main() {
     !isPublicPath("/thanks/some-id"),
     "card pages on the website stay behind sign-in"
   );
+  assert.ok(
+    isPublicPath("/thanks/some-id/card.gif"),
+    "Slack must be able to fetch the card GIF without a Google session"
+  );
 
   async function removeTestPeople() {
     // Thanks cascade with their sender and recipients.
@@ -174,7 +178,7 @@ async function main() {
   const dmReply = await runSlash("D_WITH_TEAMMATE", "for covering standup");
   assert.match(
     dmReply,
-    /^:pray: Dana Sender thanked \*Riley Teammate\*: covering standup — <[^|>]+\|View card>$/
+    /^:pray: Dana Sender thanked <@U_DM_TEAMMATE>: covering standup — <[^|>]+\|View card>$/
   );
 
   const links = dmReply.match(/<[^|>]+\|View card>/g) ?? [];
@@ -183,6 +187,17 @@ async function main() {
     1,
     `expected one "View card" link in: ${dmReply}`
   );
+  const dmBlocks = stub.replies[0]?.blocks ?? [];
+  const dmGif = dmBlocks.find(
+    (block): block is { type: string; image_url: string } =>
+      Boolean(
+        block &&
+          typeof block === "object" &&
+          (block as { type?: string }).type === "image"
+      )
+  );
+  assert.ok(dmGif, `expected a card GIF block in: ${JSON.stringify(dmBlocks)}`);
+  assert.match(dmGif.image_url, /\/thanks\/[^/]+\/card\.gif$/);
 
   const cards = await cardsFromSender();
   assert.strictEqual(cards.length, 1, "the DM should record exactly one card");
@@ -227,7 +242,7 @@ async function main() {
   });
   assert.match(
     signedReply,
-    /^:pray: Dana Sender thanked \*Riley Teammate\*: covering standup — <[^|>]+\|View card>$/
+    /^:pray: Dana Sender thanked <@U_DM_TEAMMATE>: covering standup — <[^|>]+\|View card>$/
   );
   assert.strictEqual(
     (await cardsFromSender()).length,

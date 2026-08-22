@@ -334,8 +334,10 @@ export async function countThanksReceivedInRange(range: {
   return counts;
 }
 
-export async function getThanks(id: string): Promise<ThanksWithPeople | null> {
-  const supabase = createServerSupabase();
+async function loadThanksById(
+  supabase: BoardClient,
+  id: string
+): Promise<ThanksWithPeople | null> {
   const { data, error } = await supabase
     .from("thanks")
     .select(THANKS_CORE_SELECT)
@@ -348,6 +350,20 @@ export async function getThanks(id: string): Promise<ThanksWithPeople | null> {
     data as unknown as ThanksCoreRow,
   ]);
   return thanks ?? null;
+}
+
+export async function getThanks(id: string): Promise<ThanksWithPeople | null> {
+  return loadThanksById(createServerSupabase(), id);
+}
+
+/**
+ * Load a card for the public Slack GIF. Slack's crawler has no Google session,
+ * and the image only repeats names and a reason already posted in-channel.
+ */
+export async function getThanksForPublicCard(
+  id: string
+): Promise<ThanksWithPeople | null> {
+  return loadThanksById(createServiceSupabase(), id);
 }
 
 export async function listPeople(): Promise<PersonWithStats[]> {

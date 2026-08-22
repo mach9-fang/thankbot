@@ -24,7 +24,11 @@ export type StubWorkspace = {
 
 export type SlackStub = {
   /** Messages ThankBot posted back through `response_url`. */
-  replies: Array<{ text: string; responseType: string }>;
+  replies: Array<{
+    text: string;
+    responseType: string;
+    blocks: unknown[];
+  }>;
   restore: () => void;
 };
 
@@ -56,10 +60,12 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
       const payload = JSON.parse(String(init?.body ?? "{}")) as {
         text?: string;
         response_type?: string;
+        blocks?: unknown[];
       };
       replies.push({
         text: payload.text ?? "",
         responseType: payload.response_type ?? "",
+        blocks: payload.blocks ?? [],
       });
       return jsonResponse({ ok: true });
     }

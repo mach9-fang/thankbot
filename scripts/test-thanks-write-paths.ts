@@ -274,9 +274,19 @@ async function main() {
   );
   assert.match(
     slashReply,
-    /^:pray: Sam Slack thanked \*Wren Writer\*: unblocking the deploy — <[^|>]+\|View card>$/,
+    /^:pray: Sam Slack thanked <@U_WRITE_SLASH_RECIPIENT>: unblocking the deploy — <[^|>]+\|View card>$/,
     `unexpected Slack reply: ${slashReply}`
   );
+  const slashGif = (stub.replies[0]?.blocks ?? []).find(
+    (block): block is { type: string; image_url: string } =>
+      Boolean(
+        block &&
+          typeof block === "object" &&
+          (block as { type?: string }).type === "image"
+      )
+  );
+  assert.ok(slashGif, "Slack should attach the thank-you card GIF");
+  assert.match(slashGif.image_url, /\/thanks\/[^/]+\/card\.gif$/);
 
   await removeSlashPeople();
   await cleanUp();
