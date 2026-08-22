@@ -10,6 +10,13 @@ export const THANKS_CARD_GIF_FRAME_COUNT = 10;
 export const THANKS_CARD_GIF_FRAME_DELAY_MS = 100;
 export const THANKS_CARD_GIF_DURATION_MS =
   THANKS_CARD_GIF_FRAME_COUNT * THANKS_CARD_GIF_FRAME_DELAY_MS;
+/** The burst is sampled from 0.3s to 1.3s, so the GIF opens mid-air. */
+export const THANKS_CARD_GIF_START_MS = 300;
+export const THANKS_CARD_GIF_END_MS =
+  THANKS_CARD_GIF_START_MS + THANKS_CARD_GIF_DURATION_MS;
+
+/** Breathing room around the white card, so confetti has space to fly. */
+const CARD_MARGIN = 48;
 
 const CONFETTI_COLORS = [
   [0x64, 0x36, 0xf2],
@@ -33,6 +40,7 @@ type Particle = {
   size: number;
   color: Rgb;
   shape: Shape;
+  rotation: number;
   spin: number;
 };
 
@@ -64,17 +72,17 @@ export async function renderThanksCardGif(
   const height = png.height;
   const base = toRgba(png.data, width, height, png.channels ?? 4);
   const particles = makeParticles(width, height, seedFrom(card));
+  const lastIndex = THANKS_CARD_GIF_FRAME_COUNT - 1;
 
   const last = base.slice();
-  drawConfetti(last, width, height, particles, 1);
+  drawConfetti(last, width, height, particles, frameSeconds(lastIndex));
   const palette = quantize(last, 256);
 
   const gif = GIFEncoder();
   for (let i = 0; i < THANKS_CARD_GIF_FRAME_COUNT; i++) {
-    const t = i / Math.max(1, THANKS_CARD_GIF_FRAME_COUNT - 1);
-    const frame = i === THANKS_CARD_GIF_FRAME_COUNT - 1 ? last : base.slice();
-    if (i !== THANKS_CARD_GIF_FRAME_COUNT - 1) {
-      drawConfetti(frame, width, height, particles, t);
+    const frame = i === lastIndex ? last : base.slice();
+    if (i !== lastIndex) {
+      drawConfetti(frame, width, height, particles, frameSeconds(i));
     }
     gif.writeFrame(applyPalette(frame, palette), width, height, {
       palette,
@@ -85,6 +93,13 @@ export async function renderThanksCardGif(
   }
   gif.finish();
   return gif.bytes();
+}
+
+/** Animation time (seconds) shown by frame `index` of the recorded window. */
+function frameSeconds(index: number): number {
+  return (
+    (THANKS_CARD_GIF_START_MS + index * THANKS_CARD_GIF_FRAME_DELAY_MS) / 1000
+  );
 }
 
 async function renderCardPng(card: ThanksCardGifInput): Promise<Uint8Array> {
@@ -107,7 +122,7 @@ function CardFrame({ fromName, toNames, reason }: ThanksCardGifInput) {
         display: "flex",
         flexDirection: "column",
         background: "#f3f1fc",
-        padding: 16,
+        padding: CARD_MARGIN,
       }}
     >
       <div
@@ -303,7 +318,7 @@ function makeParticles(width: number, height: number, seed: number): Particle[] 
   const rand = mulberry32(seed);
   const shapes: Shape[] = ["rect", "circle", "star", "heart"];
   const particles: Particle[] = [];
-  // Burst from the heart between From/To so names stay readable at t=0.
+  // Burst from the heart between From/To so the names stay readable.
   const originX = width * 0.5;
   const originY = height * 0.36;
 
@@ -318,6 +333,7 @@ function makeParticles(width: number, height: number, seed: number): Particle[] 
       size: 4 + rand() * 7,
       color: CONFETTI_COLORS[Math.floor(rand() * CONFETTI_COLORS.length)],
       shape: shapes[Math.floor(rand() * shapes.length)],
+      rotation: rand() * Math.PI * 2,
       spin: (rand() - 0.5) * 12,
     });
   }
@@ -333,20 +349,33 @@ function drawConfetti(
   t: number
 ) {
   const gravity = 430;
+  // Keep From/To names readable — allow the burst through the heart only.
+  const nameBandTop = CARD_MARGIN + 36;
+  const nameBandBottom = CARD_MARGIN + 112;
   for (const particle of particles) {
     const x = particle.x + particle.vx * t;
     const y = particle.y + particle.vy * t + 0.5 * gravity * t * t;
-    const rot = particle.spin * t;
+    const rot = particle.rotation + particle.spin * t;
     if (x < -12 || y < -12 || x > width + 12 || y > height + 12) continue;
-    // Keep From/To names readable — allow the burst through the heart only.
-    if (y > 52 && y < 128 && Math.abs(x - width / 2) > 46) continue;
+    if (y > nameBandTop && y < nameBandBottom && Math.abs(x - width / 2) > 46) {
+      continue;
+    }
 
     switch (particle.shape) {
       case "circle":
         fillCircle(pixels, width, height, x, y, particle.size * 0.55, particle.color);
         break;
       case "heart":
-        fillHeart(pixels, width, height, x, y, particle.size * 0.7, particle.color);
+        fillHeart(
+          pixels,
+          width,
+          height,
+          x,
+          y,
+          particle.size * 0.7,
+          rot,
+          particle.color
+        );
         break;
       case "star":
         fillStar(pixels, width, height, x, y, particle.size * 0.7, rot, particle.color);
@@ -446,17 +475,23 @@ function fillHeart(
   cx: number,
   cy: number,
   size: number,
+  rot: number,
   color: Rgb
 ) {
   const scale = Math.max(1.6, size);
-  const x0 = Math.floor(cx - scale * 1.2);
-  const x1 = Math.ceil(cx + scale * 1.2);
-  const y0 = Math.floor(cy - scale);
-  const y1 = Math.ceil(cy + scale * 1.2);
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  const reach = Math.ceil(scale * 1.2);
+  const x0 = Math.floor(cx - reach);
+  const x1 = Math.ceil(cx + reach);
+  const y0 = Math.floor(cy - reach);
+  const y1 = Math.ceil(cy + reach);
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
-      const nx = (x + 0.5 - cx) / scale;
-      const ny = -((y + 0.5 - cy) / scale);
+      const dx = (x + 0.5 - cx) / scale;
+      const dy = (y + 0.5 - cy) / scale;
+      const nx = dx * cos + dy * sin;
+      const ny = dx * sin - dy * cos;
       const a = nx * nx + ny * ny - 1;
       if (a * a * a - nx * nx * ny * ny * ny <= 0) {
         setPixel(pixels, width, height, x, y, color);
