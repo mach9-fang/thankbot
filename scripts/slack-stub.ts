@@ -24,6 +24,12 @@ export type StubWorkspace = {
   messageActivity?: Record<string, StubMessageActivity>;
   /** Channel ids where `chat.postMessage` is refused even if the bot is a member. */
   denyPostMessage?: string[];
+  /**
+   * Public channels the bot may add itself to with `conversations.join`.
+   * Anything else answers `channel_not_found`, as Slack does for a private
+   * channel or a DM the bot cannot see.
+   */
+  joinableChannels?: string[];
   /** Recent messages `conversations.history` returns, keyed by channel. */
   history?: Record<string, Array<{ ts: string; text: string }>>;
   /**
@@ -227,6 +233,19 @@ export function installSlackStub(workspace: StubWorkspace): SlackStub {
         return jsonResponse({ ok: false, error: "channel_not_found" });
       }
       return jsonResponse({ ok: true, members });
+    }
+
+    if (url.endsWith("/conversations.join")) {
+      const channel = params.get("channel") ?? "";
+      if (!workspace.joinableChannels?.includes(channel)) {
+        return jsonResponse({ ok: false, error: "channel_not_found" });
+      }
+      // Joining is what makes the conversation readable from here on.
+      workspace.channels[channel] = {
+        ...(workspace.channels[channel] ?? {}),
+        [token]: workspace.channels[channel]?.[token] ?? [],
+      };
+      return jsonResponse({ ok: true, channel: { id: channel } });
     }
 
     if (url.endsWith("/chat.postMessage")) {

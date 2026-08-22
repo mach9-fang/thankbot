@@ -19,6 +19,7 @@ const BOT = "xoxb-health-test";
 const CURRENT_SCOPES = [
   "commands",
   "chat:write",
+  "channels:join",
   "reactions:read",
   "channels:history",
   "groups:history",
@@ -148,6 +149,7 @@ async function main() {
       `a Slack app that was never reinstalled must fail the check: ${JSON.stringify(staleBody)}`
     );
     assert.deepStrictEqual(staleBody.slack.missingScopes, [
+      "channels:join",
       "reactions:read",
       "channels:history",
       "groups:history",
