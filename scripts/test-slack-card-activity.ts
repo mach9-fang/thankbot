@@ -1,6 +1,7 @@
 /**
  * Card-page Slack extras: posting as the bot, reading emoji and thread
- * replies, and never talking to Slack when there is no stored message.
+ * replies, never talking to Slack when there is no stored message, and saying
+ * out loud why a card is empty when Slack refuses to answer.
  *
  * Run: pnpm tsx scripts/test-slack-card-activity.ts
  */
@@ -39,14 +40,19 @@ const stub = installSlackStub({
 
 async function main() {
   const {
+    checkSlackToken,
     fetchSlackCardActivity,
     findSlackAnnouncement,
     postSlackMessage,
     slackTsToIso,
+    SLACK_CARD_SCOPES,
   } = await import("../src/lib/slack");
-  const { formatSlackReplyText, loadThanksSlackActivity } = await import(
-    "../src/lib/slack-card"
-  );
+  const {
+    describeSlackCardBlocker,
+    formatSlackReplyText,
+    loadThanksSlackActivity,
+    SLACK_IDENTITY_MIGRATION,
+  } = await import("../src/lib/slack-card");
 
   process.env.SLACK_BOT_TOKEN = BOT;
 
@@ -64,8 +70,13 @@ async function main() {
   stub.reset();
   stub.calls.length = 0;
 
-  const empty = await loadThanksSlackActivity("card-id", null);
-  assert.strictEqual(empty, null);
+  const unannounced = await loadThanksSlackActivity("card-id", {
+    status: "not_announced",
+  });
+  assert.deepStrictEqual(unannounced, {
+    status: "blocked",
+    blocker: { kind: "not_announced" },
+  });
   assert.deepStrictEqual(
     stub.calls.filter((call) =>
       call === "reactions.get" ||
@@ -76,12 +87,32 @@ async function main() {
     "a card with no Slack message must not call Slack"
   );
 
+  // The migration that adds thanks.slack_channel_id is applied by hand, so a
+  // deploy can run ahead of it. That must not read as "nobody reacted".
+  const pending = await loadThanksSlackActivity("card-id", {
+    status: "schema_pending",
+  });
+  assert.deepStrictEqual(pending, {
+    status: "blocked",
+    blocker: { kind: "schema_pending", migration: SLACK_IDENTITY_MIGRATION },
+  });
+  assert.match(
+    describeSlackCardBlocker({
+      kind: "schema_pending",
+      migration: SLACK_IDENTITY_MIGRATION,
+    }),
+    /0006_slack_message_identity\.sql/
+  );
+
   delete process.env.SLACK_BOT_TOKEN;
   const noToken = await loadThanksSlackActivity("card-id", {
-    channelId: CHANNEL,
-    messageTs: "111.001",
+    status: "announced",
+    ref: { channelId: CHANNEL, messageTs: "111.001" },
   });
-  assert.strictEqual(noToken, null);
+  assert.deepStrictEqual(noToken, {
+    status: "blocked",
+    blocker: { kind: "no_token" },
+  });
   assert.deepStrictEqual(
     stub.calls.filter((call) =>
       call === "reactions.get" || call === "conversations.replies"
@@ -90,6 +121,15 @@ async function main() {
     "without a bot token the card page must not call Slack"
   );
   process.env.SLACK_BOT_TOKEN = BOT;
+
+  // A readable message that nobody has touched yet is a different answer from
+  // a message ThankBot cannot read.
+  stub.setActivity(CHANNEL, "333.001", {});
+  const quiet = await loadThanksSlackActivity("card-id", {
+    status: "announced",
+    ref: { channelId: CHANNEL, messageTs: "333.001" },
+  });
+  assert.deepStrictEqual(quiet, { status: "quiet" });
 
   const activity = await fetchSlackCardActivity("C_KNOWN", "111.001", BOT);
   assert.deepStrictEqual(
@@ -113,7 +153,13 @@ async function main() {
   assert.match(activity.replies[0].text, /You're welcome/);
 
   const missingMessage = await fetchSlackCardActivity("C_KNOWN", "9.999", BOT);
-  assert.deepStrictEqual(missingMessage, { reactions: [], replies: [] });
+  assert.deepStrictEqual(missingMessage.reactions, []);
+  assert.deepStrictEqual(missingMessage.replies, []);
+  assert.deepStrictEqual(
+    missingMessage.problems.map((problem) => problem.error),
+    ["message_not_found", "message_not_found"],
+    "Slack refusals must reach the caller, not be swallowed as an empty card"
+  );
 
   assert.strictEqual(
     slackTsToIso("1700000000.000001"),
@@ -161,14 +207,150 @@ async function main() {
     assert.strictEqual(found, recoveredTs);
 
     const recovered = await loadThanksSlackActivity(recoverId, {
-      channelId: CHANNEL,
-      messageTs: null,
+      status: "announced",
+      ref: { channelId: CHANNEL, messageTs: null },
     });
-    assert.ok(recovered, "card view should recover the slash-command announcement");
-    assert.strictEqual(recovered.reactions[0].name, "eyes");
+    assert.strictEqual(
+      recovered.status,
+      "activity",
+      "card view should recover the slash-command announcement"
+    );
+    if (recovered.status !== "activity") throw new Error("unreachable");
+    assert.strictEqual(recovered.activity.reactions[0].name, "eyes");
     assert.ok(recoverStub.calls.includes("conversations.history"));
   } finally {
     recoverStub.restore();
+  }
+
+  // The whole feature shipped behind two scopes nobody has to grant for
+  // `/thanks` to keep working, so an install that was never redone answers
+  // `missing_scope` to both reads.
+  const scopelessTs = "333.010";
+  const scopelessStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: { [CHANNEL]: { [BOT]: [SENDER] } },
+    messageActivity: { [`${CHANNEL}:${scopelessTs}`]: {} },
+    refuse: {
+      "reactions.get": { error: "missing_scope", needed: "reactions:read" },
+      "conversations.replies": {
+        error: "missing_scope",
+        needed: "channels:history",
+      },
+    },
+  });
+  try {
+    const state = await loadThanksSlackActivity("card-id", {
+      status: "announced",
+      ref: { channelId: CHANNEL, messageTs: scopelessTs },
+    });
+    if (state.status !== "blocked") throw new Error("expected a blocked card");
+    const said = describeSlackCardBlocker(state.blocker);
+    assert.deepStrictEqual(state.blocker, {
+      kind: "missing_scope",
+      scopes: ["reactions:read", "channels:history"],
+    });
+    assert.match(said, /reactions:read and channels:history scopes/);
+    assert.match(said, /reinstall/i);
+  } finally {
+    scopelessStub.restore();
+  }
+
+  // Emoji and replies need different scopes, so half of the card can still
+  // load — show what came back and name what did not.
+  const halfTs = "333.020";
+  const halfStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: { [CHANNEL]: { [BOT]: [SENDER] } },
+    messageActivity: {
+      [`${CHANNEL}:${halfTs}`]: { reactions: [{ name: "tada", users: [SENDER] }] },
+    },
+    refuse: {
+      "conversations.replies": {
+        error: "missing_scope",
+        needed: "channels:history",
+      },
+    },
+  });
+  try {
+    const state = await loadThanksSlackActivity("card-id", {
+      status: "announced",
+      ref: { channelId: CHANNEL, messageTs: halfTs },
+    });
+    assert.strictEqual(state.status, "activity");
+    if (state.status !== "activity") throw new Error("unreachable");
+    assert.strictEqual(state.activity.reactions[0].name, "tada");
+    assert.deepStrictEqual(state.blocker, {
+      kind: "missing_scope",
+      scopes: ["channels:history"],
+    });
+  } finally {
+    halfStub.restore();
+  }
+
+  // Being removed from the channel reads as an empty thread too.
+  const goneStub = installSlackStub({
+    users: { [SENDER]: { name: "Sam Sender" } },
+    channels: { [CHANNEL]: { [BOT]: [SENDER] } },
+    refuse: {
+      "reactions.get": { error: "not_in_channel" },
+      "conversations.replies": { error: "not_in_channel" },
+    },
+  });
+  try {
+    const state = await loadThanksSlackActivity("card-id", {
+      status: "announced",
+      ref: { channelId: CHANNEL, messageTs: "333.030" },
+    });
+    if (state.status !== "blocked") throw new Error("expected a blocked card");
+    const said = describeSlackCardBlocker(state.blocker);
+    assert.deepStrictEqual(state.blocker, {
+      kind: "unreadable",
+      error: "not_in_channel",
+    });
+    assert.match(said, /no longer in the Slack conversation/);
+  } finally {
+    goneStub.restore();
+  }
+
+  // `/api/health` should be able to answer "is this install current?" without
+  // waiting for somebody to open a card.
+  const installStub = installSlackStub({
+    users: {},
+    channels: {},
+    tokenOwners: { [BOT]: "B_THANKBOT" },
+    grantedScopes: ["commands", "chat:write", "users:read"],
+  });
+  try {
+    const check = await checkSlackToken(BOT);
+    assert.strictEqual(check.configured, true);
+    assert.strictEqual(check.ok, false);
+    assert.deepStrictEqual(check.missingScopes, [
+      "reactions:read",
+      "channels:history",
+      "groups:history",
+      "im:history",
+      "mpim:history",
+    ]);
+
+    const noToken = await checkSlackToken("");
+    assert.strictEqual(noToken.configured, false);
+    assert.deepStrictEqual(noToken.missingScopes, [...SLACK_CARD_SCOPES]);
+  } finally {
+    installStub.restore();
+  }
+
+  const currentStub = installSlackStub({
+    users: {},
+    channels: {},
+    tokenOwners: { [BOT]: "B_THANKBOT" },
+    grantedScopes: [...SLACK_CARD_SCOPES, "commands", "users:read"],
+  });
+  try {
+    const check = await checkSlackToken(BOT);
+    assert.strictEqual(check.ok, true);
+    assert.deepStrictEqual(check.missingScopes, []);
+  } finally {
+    currentStub.restore();
   }
 
   console.log("slack card activity tests passed");

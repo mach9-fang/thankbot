@@ -1,15 +1,30 @@
-import type { SlackCardActivity as SlackCardActivityData } from "@/lib/types";
+import { describeSlackCardBlocker, type SlackCardState } from "@/lib/slack-card";
 import { Avatar } from "./Avatar";
 import { formatThanksWhen } from "./ThanksCard";
 
-export function SlackCardActivity({
-  activity,
-}: {
-  activity: SlackCardActivityData;
-}) {
+/**
+ * The "On Slack" strip under a thank-you card.
+ *
+ * When there is nothing to show it says why: a quiet thread and a Slack app
+ * that cannot read the thread need different things from the reader.
+ */
+export function SlackCardActivity({ state }: { state: SlackCardState }) {
+  if (state.status === "blocked") {
+    return <SlackCardNote>{describeSlackCardBlocker(state.blocker)}</SlackCardNote>;
+  }
+
+  if (state.status === "quiet") {
+    return (
+      <SlackCardNote>
+        No Slack emoji or thread replies yet — react in the thread and reload
+        this page.
+      </SlackCardNote>
+    );
+  }
+
+  const { activity, blocker } = state;
   const hasReactions = activity.reactions.length > 0;
   const hasComments = activity.comments.length > 0;
-  if (!hasReactions && !hasComments) return null;
 
   return (
     <div className="border-t border-brand-100 bg-white/70 px-6 py-6 sm:px-10 sm:py-8">
@@ -61,6 +76,20 @@ export function SlackCardActivity({
           ))}
         </ul>
       ) : null}
+
+      {blocker ? (
+        <p className="mt-5 text-sm text-ink-400">
+          {describeSlackCardBlocker(blocker)}
+        </p>
+      ) : null}
     </div>
+  );
+}
+
+function SlackCardNote({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="border-t border-brand-100 bg-white/70 px-6 py-4 text-sm text-ink-400 sm:px-10">
+      {children}
+    </p>
   );
 }

@@ -337,11 +337,21 @@ async function main() {
         "recording a thanks must not read Slack reactions or replies"
       );
 
-      const activity = await loadThanksSlackActivity(slackCard.id, {
-        channelId: SLASH_CHANNEL,
-        messageTs: stub.messages[0].ts,
+      const state = await loadThanksSlackActivity(slackCard.id, {
+        status: "announced",
+        ref: {
+          channelId: SLASH_CHANNEL,
+          messageTs: stub.messages[0].ts,
+        },
       });
-      assert.ok(activity, "the card view should load Slack extras");
+      assert.strictEqual(
+        state.status,
+        "activity",
+        "the card view should load Slack extras"
+      );
+      if (state.status !== "activity") throw new Error("unreachable");
+      const { activity } = state;
+      assert.strictEqual(state.blocker, null);
       assert.strictEqual(activity.reactions.length, 1);
       assert.strictEqual(activity.reactions[0].name, "heart");
       assert.strictEqual(activity.comments.length, 1);

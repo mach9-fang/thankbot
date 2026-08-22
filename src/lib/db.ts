@@ -749,10 +749,22 @@ export type ThanksSlackRef = {
   messageTs: string | null;
 };
 
+/**
+ * A card with nothing to read on Slack, and why.
+ *
+ * `schema_pending` and `not_announced` produce the same empty card page but
+ * need opposite fixes — apply a migration, or invite ThankBot to the channel —
+ * so they are worth telling apart.
+ */
+export type ThanksSlackRefResult =
+  | { status: "announced"; ref: ThanksSlackRef }
+  | { status: "not_announced" }
+  | { status: "schema_pending" };
+
 /** Slack conversation that announced this card, and the message ts when known. */
 export async function getThanksSlackRef(
   id: string
-): Promise<ThanksSlackRef | null> {
+): Promise<ThanksSlackRefResult> {
   const supabase = createServerSupabase();
   const { data, error } = await supabase
     .from("thanks")
@@ -761,15 +773,18 @@ export async function getThanksSlackRef(
     .maybeSingle();
 
   if (error) {
-    if (isMissingSlackIdentityColumn(error)) return null;
+    if (isMissingSlackIdentityColumn(error)) return { status: "schema_pending" };
     throw new Error(error.message);
   }
   if (!data?.slack_channel_id) {
-    return null;
+    return { status: "not_announced" };
   }
   return {
-    channelId: data.slack_channel_id as string,
-    messageTs: (data.slack_message_ts as string | null) ?? null,
+    status: "announced",
+    ref: {
+      channelId: data.slack_channel_id as string,
+      messageTs: (data.slack_message_ts as string | null) ?? null,
+    },
   };
 }
 

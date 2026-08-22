@@ -44,10 +44,13 @@ export default async function ThanksPage({
   }
 
   const reason = emojifyText(thanks.reason);
-  const slackActivity = await loadThanksSlackActivity(
-    thanks.id,
-    await getThanksSlackRef(thanks.id)
-  );
+  const slackRef = await getThanksSlackRef(thanks.id);
+
+  // A web card that was never meant to reach Slack has nothing to explain.
+  const slackState =
+    thanks.source === "slack" || slackRef.status === "announced"
+      ? await loadThanksSlackActivity(thanks.id, slackRef)
+      : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -126,14 +129,7 @@ export default async function ThanksPage({
           </div>
         </div>
 
-        {slackActivity ? (
-          <SlackCardActivity activity={slackActivity} />
-        ) : thanks.source === "slack" ? (
-          <p className="border-t border-brand-100 bg-white/70 px-6 py-4 text-sm text-ink-400 sm:px-10">
-            Slack emoji and thread replies appear here when ThankBot can see
-            the announcement.
-          </p>
-        ) : null}
+        {slackState ? <SlackCardActivity state={slackState} /> : null}
       </article>
     </div>
   );
